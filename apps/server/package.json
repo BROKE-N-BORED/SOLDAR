@@ -1,1 +1,1 @@
-{"name":"@soldar/server","private":true,"type":"module","version":"0.1.0"}
+{"dependencies":{"@soldar/engine":"workspace:*","@soldar/nodes":"workspace:*"},"name":"@soldar/server","private":true,"scripts":{"build":"tsc -b"},"type":"module","version":"0.1.0"}

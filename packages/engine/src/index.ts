@@ -1,3 +1,13 @@
-// Workflow execution engine — Phase 1 builds the runner here.
-// Phase 0 only proves the workspace, toolchain, and test runner work.
+// Workflow execution engine — the pure core of Soldar. No server code,
+// no UI code: graph validation, run order, expression evaluation, the
+// runner, SQLite storage, and the Code node sandbox.
+
 export const ENGINE_VERSION = '0.1.0';
+
+export * from './types.js';
+export * from './graph.js';
+export * from './expressions.js';
+export * from './runner.js';
+export * from './storage.js';
+export * from './sandbox.js';
+export * from './schema.js';
