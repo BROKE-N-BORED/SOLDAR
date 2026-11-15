@@ -1,0 +1,32 @@
+# dependencies + build output
+node_modules/
+dist/
+
+# secrets — never committed (standing rule)
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+id_rsa*
+providers.json
+connectors.json
+vault.json
+vault.key
+credentials*
+*credentials*.json
+*secret*.json
+local-config.json
+config.local.*
+
+# local data
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+
+# editor + OS
+.DS_Store
