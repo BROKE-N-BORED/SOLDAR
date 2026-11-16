@@ -114,8 +114,10 @@ run_phase() {
 
   port_free "$port" || fail "Phase $name: port $port is already in use before the install."
 
+  # XDG_CONFIG_HOME is pinned so the server's data dir is under the fake
+  # home no matter what the machine running this test has set.
   env HOME="$fake_home" PATH="$path" SOLDAR_INSTALL_NONINTERACTIVE=1 \
-    SOLDAR_PORT="$port" bash "$extract/install.sh" \
+    SOLDAR_PORT="$port" XDG_CONFIG_HOME="$fake_home/.config" bash "$extract/install.sh" \
     || fail "Phase $name: install.sh exited non-zero."
 
   [ -f "$fake_home/.local/share/applications/soldar.desktop" ] \
@@ -137,7 +139,7 @@ run_phase() {
   note "Phase $name: launch (first click)"
   : > "$XDG_LOG"
   env HOME="$fake_home" PATH="$STUB_BIN:$path" SOLDAR_PORT="$port" \
-    bash "$extract/soldar.sh" \
+    XDG_CONFIG_HOME="$fake_home/.config" bash "$extract/soldar.sh" \
     || fail "Phase $name: the launcher exited non-zero on the first run."
   curl -fsSL --max-time 5 "http://127.0.0.1:$port/api/health" | grep -q '"status":"ok"' \
     || fail "Phase $name: the server does not answer on port $port after launch."
@@ -153,7 +155,7 @@ run_phase() {
 
   note "Phase $name: launch (second click reuses the instance)"
   env HOME="$fake_home" PATH="$STUB_BIN:$path" SOLDAR_PORT="$port" \
-    bash "$extract/soldar.sh" \
+    XDG_CONFIG_HOME="$fake_home/.config" bash "$extract/soldar.sh" \
     || fail "Phase $name: the launcher exited non-zero on the second run."
   local pid2
   pid2="$(server_pid "$extract")"
@@ -161,6 +163,49 @@ run_phase() {
     || fail "Phase $name: the second launch started a new server (was $pid1, now $pid2)."
   [ "$(grep -c "http://127.0.0.1:$port" "$XDG_LOG")" = "2" ] \
     || fail "Phase $name: the second launch did not open the app URL again."
+
+  if [ "$name" = "A" ]; then
+    # Reinstall keeps the data (0.2.0 layout migration): put the database
+    # back where 0.2.0 kept it, in the app folder, reinstall, and check the
+    # database moved to the data dir and the workflow survived. The
+    # installer migrates first and the server migrates on startup too;
+    # this checks the combined behaviour, not which layer moved it.
+    note "Phase $name: reinstall keeps the data"
+    curl -fsSL --max-time 5 -X POST -H 'Content-Type: application/json' \
+      -d '{"name":"Keep me"}' "http://127.0.0.1:$port/api/workflows" >/dev/null \
+      || fail "Phase $name: could not create a workflow for the migration check."
+    curl -fsSL --max-time 5 "http://127.0.0.1:$port/api/workflows" | grep -q 'Keep me' \
+      || fail "Phase $name: the workflow is not listed before the reinstall."
+
+    pkill -f "$extract/apps/server/dist/index.js" 2>/dev/null || true
+    for ((i = 0; i < 10; i++)); do
+      port_free "$port" && break
+      sleep 1
+    done
+    port_free "$port" || fail "Phase $name: the server did not stop for the migration check."
+    local data_dir="$fake_home/.config/soldar"
+    [ -f "$data_dir/soldar.db" ] \
+      || fail "Phase $name: no database in the data dir to migrate."
+    mv "$data_dir/soldar.db" "$extract/soldar.db"
+    [ -f "$data_dir/soldar.log" ] && mv "$data_dir/soldar.log" "$extract/soldar.log"
+
+    env HOME="$fake_home" PATH="$path" SOLDAR_INSTALL_NONINTERACTIVE=1 \
+      SOLDAR_PORT="$port" XDG_CONFIG_HOME="$fake_home/.config" bash "$extract/install.sh" \
+      || fail "Phase $name: the reinstall exited non-zero."
+    [ -f "$data_dir/soldar.db" ] \
+      || fail "Phase $name: the reinstall did not move the database to the data dir."
+    [ ! -f "$extract/soldar.db" ] \
+      || fail "Phase $name: the old database is still in the app folder after the reinstall."
+    [ -f "$data_dir/soldar.log" ] \
+      || fail "Phase $name: the reinstall did not move the log to the data dir."
+
+    : > "$XDG_LOG"
+    env HOME="$fake_home" PATH="$STUB_BIN:$path" SOLDAR_PORT="$port" \
+      XDG_CONFIG_HOME="$fake_home/.config" bash "$extract/soldar.sh" \
+      || fail "Phase $name: the launcher exited non-zero after the reinstall."
+    curl -fsSL --max-time 5 "http://127.0.0.1:$port/api/workflows" | grep -q 'Keep me' \
+      || fail "Phase $name: the workflow did not survive the reinstall."
+  fi
 
   pkill -f "$extract/apps/server/dist/index.js" 2>/dev/null || true
   for ((i = 0; i < 10; i++)); do

@@ -28,6 +28,14 @@ If double-clicking an icon opens a text editor instead of starting
 anything, right-click the icon, choose Allow Launching, and double-click
 it again.
 
+## Where your stuff lives
+
+Your workflows, runs, and the log live in `~/.config/soldar`, outside the
+app folder, so reinstalling from a new ZIP keeps everything. Set
+`SOLDAR_DATA_DIR` to put them somewhere else. If you are upgrading from
+0.2.0, where the database lived in the app folder, the installer moves it
+to `~/.config/soldar` for you.
+
 ## Run a workflow from the terminal
 
 ```

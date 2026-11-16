@@ -107,3 +107,62 @@ test('a finished run shows up in the Runs list', async ({ page }) => {
   await row.click();
   await expect(page.locator('.run-panel-status')).toHaveText('Finished, all good');
 });
+
+test('leaving the editor with unsaved changes asks first', async ({ page }) => {
+  const created = await page.request.post('/api/workflows', {
+    data: { name: 'Guard flow' },
+  });
+  expect(created.ok()).toBeTruthy();
+  const { workflow } = (await created.json()) as {
+    workflow: { id: string };
+  };
+  await page.goto(`/workflows/${workflow.id}`);
+  await expect(page.locator('.editor-name')).toHaveValue('Guard flow');
+
+  // Make an unsaved change.
+  await page.locator('.palette-item', { hasText: 'Set' }).click();
+  await expect(page.locator('.editor-dirty')).toBeVisible();
+
+  // Try to leave: the dialog appears, and staying keeps the editor open.
+  await page.getByRole('link', { name: 'Runs' }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  await page.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(page).toHaveURL(new RegExp(`/workflows/${workflow.id}`));
+  await expect(page.locator('.editor-dirty')).toBeVisible();
+
+  // Try again and leave: the navigation goes through.
+  await page.getByRole('link', { name: 'Runs' }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  await page.getByRole('button', { name: 'Leave without saving' }).click();
+  await expect(page).toHaveURL(/\/executions$/);
+});
+
+test('reloading with unsaved changes shows the browser prompt', async ({ page }) => {
+  const created = await page.request.post('/api/workflows', {
+    data: { name: 'Reload guard flow' },
+  });
+  expect(created.ok()).toBeTruthy();
+  const { workflow } = (await created.json()) as {
+    workflow: { id: string };
+  };
+  await page.goto(`/workflows/${workflow.id}`);
+  await expect(page.locator('.editor-name')).toHaveValue('Reload guard flow');
+
+  // Make an unsaved change (the click is also the user gesture browsers
+  // want before they show the beforeunload prompt).
+  await page.locator('.palette-item', { hasText: 'Set' }).click();
+  await expect(page.locator('.editor-dirty')).toBeVisible();
+
+  // Reload: the browser prompt must appear. Accept it so the reload goes
+  // through; the unsaved node is gone afterwards, as expected.
+  let sawPrompt = false;
+  page.on('dialog', (dialog) => {
+    expect(dialog.type()).toBe('beforeunload');
+    sawPrompt = true;
+    void dialog.accept();
+  });
+  await page.reload();
+  expect(sawPrompt).toBe(true);
+  await expect(page.locator('.editor-name')).toHaveValue('Reload guard flow');
+  await expect(page.locator('.editor-dirty')).toHaveCount(0);
+});

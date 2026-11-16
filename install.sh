@@ -2,15 +2,17 @@
 # Soldar installer — double-click "Install Soldar" and this does the rest.
 #
 # What it does, in order:
-#   1. Makes sure Node 24 or newer is available (downloads its own copy
+#   1. Moves your workflows and runs to ~/.config/soldar if they still
+#      live in the app folder from an older install.
+#   2. Makes sure Node 24 or newer is available (downloads its own copy
 #      into ~/.local/soldar/node if the computer does not have one).
-#   2. Makes sure pnpm is available (corepack, then npm, then npx).
-#   3. Installs Soldar's parts and builds the app.
-#   4. Puts a Soldar icon on the desktop and in the applications menu.
-#   5. Starts Soldar once to prove the install actually works.
+#   3. Makes sure pnpm is available (corepack, then npm, then npx).
+#   4. Installs Soldar's parts and builds the app.
+#   5. Puts a Soldar icon on the desktop and in the applications menu.
+#   6. Starts Soldar once to prove the install actually works.
 #
-# It never uses sudo and never touches anything outside the Soldar folder
-# and ~/.local. Set SOLDAR_INSTALL_NONINTERACTIVE=1 to skip the final
+# It never uses sudo and never touches anything outside the Soldar folder,
+# ~/.local, and ~/.config/soldar. Set SOLDAR_INSTALL_NONINTERACTIVE=1 to skip the final
 # "Press Enter" prompt (used by the installer test).
 set -euo pipefail
 
@@ -46,6 +48,42 @@ server_healthy() {
 
 node_major() {
   node --version 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'
+}
+
+# Where Soldar keeps its data: ~/.config/soldar, unless SOLDAR_DATA_DIR
+# says otherwise. Matches apps/server/src/data-dir.ts; keep the two in step.
+data_dir() {
+  if [ -n "${SOLDAR_DATA_DIR:-}" ]; then
+    printf '%s' "$SOLDAR_DATA_DIR"
+  else
+    printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/soldar"
+  fi
+}
+
+# Up to 0.2.0 the database lived in the app folder, so reinstalling from a
+# new ZIP wiped every workflow and run. Move it (and the log) to the data
+# dir, but only when the data dir has no database yet, and never when the
+# user picked a data dir themselves (their choice stands). The server does
+# the same move on startup; this runs first so the data is safe even if
+# the rest of the install is interrupted.
+migrate_legacy_data() {
+  if [ -n "${SOLDAR_DATA_DIR:-}" ]; then return 0; fi
+  [ -f "$APP_DIR/soldar.db" ] || return 0
+  local dest
+  dest="$(data_dir)"
+  mkdir -p "$dest"
+  if [ -f "$dest/soldar.db" ]; then
+    echo "Found an old database in the app folder, but $dest/soldar.db already exists, so the old one was left alone."
+    return 0
+  fi
+  echo "Moving your workflows and runs to $dest..."
+  local name
+  for name in soldar.db soldar.db-wal soldar.db-shm soldar.db-journal soldar.log soldar.log.1; do
+    if [ -f "$APP_DIR/$name" ] && [ ! -e "$dest/$name" ]; then
+      mv "$APP_DIR/$name" "$dest/$name" \
+        || echo "Could not move $APP_DIR/$name. It is still there."
+    fi
+  done
 }
 
 install_bundled_node() {
@@ -203,7 +241,10 @@ verify_install() {
     return 0
   fi
   echo "Starting Soldar once to make sure it works..."
-  node "$APP_DIR/apps/server/dist/index.js" >>"$APP_DIR/soldar.log" 2>&1 &
+  local verify_log
+  verify_log="$(data_dir)/verify.log"
+  mkdir -p "$(data_dir)"
+  node "$APP_DIR/apps/server/dist/index.js" >>"$verify_log" 2>&1 &
   local pid=$!
   local ok=0
   # A cold first start on a slow PC can take a while; give it a minute.
@@ -216,8 +257,8 @@ verify_install() {
   wait "$pid" 2>/dev/null || true
   if [ "$ok" != "1" ]; then
     echo "What Soldar said before it stopped:" >&2
-    tail -20 "$APP_DIR/soldar.log" 2>/dev/null >&2 || true
-    die "Soldar started but did not answer on port ${SOLDAR_PORT:-5678}. See $APP_DIR/soldar.log for what it said."
+    tail -20 "$verify_log" 2>/dev/null >&2 || true
+    die "Soldar started but did not answer on port ${SOLDAR_PORT:-5678}. See $verify_log for what it said."
   fi
   echo "Soldar started and answered. The install works."
 }
@@ -233,6 +274,8 @@ main() {
   # no matter how this folder arrived (a zip or a clone can drop the bit).
   [ -f "$APP_DIR/soldar.sh" ] || die "soldar.sh is missing from this folder, so the install cannot finish."
   chmod +x "$APP_DIR/soldar.sh"
+
+  migrate_legacy_data
 
   ensure_node
   resolve_pnpm

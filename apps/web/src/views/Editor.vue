@@ -74,12 +74,21 @@
         </div>
       </div>
     </template>
+    <ConfirmDialog
+      v-if="leaving"
+      title="Leave without saving?"
+      message="You have unsaved changes. They will be lost if you leave now."
+      confirm-label="Leave without saving"
+      cancel-label="Keep editing"
+      @confirm="resolveLeave(true)"
+      @cancel="resolveLeave(false)"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { RouterLink } from 'vue-router';
+import { onBeforeRouteLeave, RouterLink } from 'vue-router';
 import {
   VueFlow,
   useVueFlow,
@@ -95,6 +104,7 @@ import { useWorkflowsStore } from '../stores/workflows.js';
 import NodePalette from '../components/NodePalette.vue';
 import NodeSettings from '../components/NodeSettings.vue';
 import ExecutionPanel from '../components/ExecutionPanel.vue';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import SoldarNode from '../components/SoldarNode.vue';
 import {
   emptyRunState,
@@ -142,6 +152,35 @@ const flowEdges = ref<FlowEdge[]>([]);
 const dirty = ref(false);
 const saving = ref(false);
 const saveError = ref('');
+// The unsaved-changes guard: leaving the editor with unsaved work asks
+// first, both for in-app navigation (the router guard below) and for
+// closing the tab or typing a new address (beforeunload). The dialog
+// holds the navigation until the user picks.
+const leaving = ref(false);
+let leaveResolve: ((leave: boolean) => void) | null = null;
+
+function resolveLeave(leave: boolean): void {
+  leaving.value = false;
+  const resolve = leaveResolve;
+  leaveResolve = null;
+  resolve?.(leave);
+}
+
+onBeforeRouteLeave(() => {
+  if (!dirty.value) return true;
+  return new Promise<boolean>((resolve) => {
+    leaveResolve = resolve;
+    leaving.value = true;
+  });
+});
+
+function onBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!dirty.value) return;
+  event.preventDefault();
+  // The returnValue assignment is the older way of asking; harmless here
+  // and still what some browsers look at.
+  event.returnValue = '';
+}
 const selectedNodeId = ref<string | null>(null);
 const runState = ref<RunState>(emptyRunState());
 
@@ -619,10 +658,12 @@ onMounted(() => {
     }, 50);
   });
   window.addEventListener('keydown', onKeydown);
+  window.addEventListener('beforeunload', onBeforeUnload);
 });
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown);
+  window.removeEventListener('beforeunload', onBeforeUnload);
   stopPolling();
   closeSocket();
 });

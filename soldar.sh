@@ -8,7 +8,13 @@ set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${SOLDAR_PORT:-5678}"
-LOG="$APP_DIR/soldar.log"
+# The launcher log lives with the rest of Soldar's data, outside the app
+# folder, so reinstalling from a new ZIP keeps it. Same location rule as
+# the server (see apps/server/src/data-dir.ts); a different file name so
+# it never collides with the server's own soldar.log.
+DATA_DIR="${SOLDAR_DATA_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/soldar}"
+LOG="$DATA_DIR/launcher.log"
+mkdir -p "$DATA_DIR" 2>/dev/null || LOG="$APP_DIR/soldar.log"
 
 resolve_node() {
   # The installer's own copy of Node wins; otherwise use the system one.
