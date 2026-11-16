@@ -27,6 +27,12 @@ config.local.*
 *.db-journal
 *.sqlite
 *.sqlite-journal
+*.log
+
+# build + test artifacts
+*.tsbuildinfo
+test-results/
+playwright-report/
 
 # editor + OS
 .DS_Store

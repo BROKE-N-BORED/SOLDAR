@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+# Soldar installer — double-click "Install Soldar" and this does the rest.
+#
+# What it does, in order:
+#   1. Makes sure Node 24 or newer is available (downloads its own copy
+#      into ~/.local/soldar/node if the computer does not have one).
+#   2. Makes sure pnpm is available (corepack, then npm, then npx).
+#   3. Installs Soldar's parts and builds the app.
+#   4. Puts a Soldar icon on the desktop and in the applications menu.
+#   5. Starts Soldar once to prove the install actually works.
+#
+# It never uses sudo and never touches anything outside the Soldar folder
+# and ~/.local. Set SOLDAR_INSTALL_NONINTERACTIVE=1 to skip the final
+# "Press Enter" prompt (used by the installer test).
+set -euo pipefail
+
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOLDAR_HOME="$HOME/.local/soldar"
+NODE_FALLBACK="v24.22.3"
+PNPM_VERSION="12.21.0"
+USING_BUNDLED_NODE=0
+TRUST_FAILED=0
+
+press_enter() {
+  if [ -n "${SOLDAR_INSTALL_NONINTERACTIVE:-}" ]; then return 0; fi
+  if [ ! -t 0 ]; then return 0; fi
+  echo ""
+  read -r -p "Press Enter to close this window." _dummy || true
+}
+trap press_enter EXIT
+
+die() {
+  echo ""
+  echo "Soldar could not be installed: $1" >&2
+  exit 1
+}
+
+server_healthy() {
+  local body
+  body="$(curl -fsSL --max-time 3 "http://127.0.0.1:${SOLDAR_PORT:-5678}/api/health" 2>/dev/null || echo "")"
+  case "$body" in
+    *'"status":"ok"'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+node_major() {
+  node --version 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'
+}
+
+install_bundled_node() {
+  command -v tar >/dev/null 2>&1 || die "tar is needed to unpack Node and it is not on this computer."
+  command -v xz >/dev/null 2>&1 || die "xz is needed to unpack Node and it is not on this computer."
+  mkdir -p "$SOLDAR_HOME"
+
+  # Ask nodejs.org for the newest Node 24 LTS; fall back to the version
+  # this installer was written against if the list cannot be read.
+  local version="$NODE_FALLBACK"
+  local index
+  index="$(curl -fsSL --max-time 30 https://nodejs.org/dist/index.json 2>/dev/null || echo "")"
+  if [ -n "$index" ] && command -v python3 >/dev/null 2>&1; then
+    local latest
+    latest="$(printf '%s' "$index" | python3 -c 'import json, sys; data = json.load(sys.stdin); print(next((e["version"] for e in data if e.get("lts") and e["version"].startswith("v24.")), ""))' 2>/dev/null || echo "")"
+    if [ -n "$latest" ]; then version="$latest"; fi
+  fi
+
+  local tarball="node-${version}-linux-x64.tar.xz"
+  local dest="$SOLDAR_HOME/$tarball"
+  echo "Downloading Node $version..."
+  # -C - resumes a half-finished download instead of starting over.
+  curl -fSL --retry 3 --retry-all-errors -C - -o "$dest" "https://nodejs.org/dist/${version}/${tarball}" \
+    || die "The Node download failed. Check the internet connection and run the installer again."
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "Checking the download..."
+    curl -fsSL --max-time 30 "https://nodejs.org/dist/${version}/SHASUMS256.txt" -o "$SOLDAR_HOME/SHASUMS256.txt" \
+      || die "Could not fetch the Node checksum list."
+    if ! grep "  ${tarball}\$" "$SOLDAR_HOME/SHASUMS256.txt" | (cd "$SOLDAR_HOME" && sha256sum -c - >/dev/null); then
+      rm -f "$dest"
+      die "The Node download did not match its checksum, so it was thrown away. Run the installer again."
+    fi
+  fi
+
+  echo "Unpacking Node..."
+  tar -xJf "$dest" -C "$SOLDAR_HOME"
+  ln -sfn "$SOLDAR_HOME/node-${version}-linux-x64" "$SOLDAR_HOME/node"
+  export PATH="$SOLDAR_HOME/node/bin:$PATH"
+  echo "Node $(node --version) is ready."
+}
+
+ensure_node() {
+  local major
+  major="$(node_major || echo "")"
+  if [ -n "$major" ] && [ "$major" -ge 24 ] 2>/dev/null; then
+    echo "Node $(node --version) found."
+    return 0
+  fi
+  echo "Node 24 or newer was not found. Getting a copy for Soldar..."
+  install_bundled_node
+  USING_BUNDLED_NODE=1
+}
+
+# Finds a pnpm and leaves the command in the PNPM array. Prefers a real
+# pnpm on PATH; falls back to corepack, then a global npm install, then an
+# npx shim so the nested `pnpm` calls inside the build scripts still work.
+resolve_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    PNPM=(pnpm)
+    return 0
+  fi
+  if command -v corepack >/dev/null 2>&1; then
+    # corepack downloads pnpm; a hiccup in the download is worth one retry.
+    local attempt
+    for attempt in 1 2; do
+      if corepack prepare "pnpm@${PNPM_VERSION}" --activate >/dev/null 2>&1 && command -v pnpm >/dev/null 2>&1; then
+        PNPM=(pnpm)
+        return 0
+      fi
+      sleep 10
+    done
+  fi
+  if command -v npm >/dev/null 2>&1; then
+    if npm install -g "pnpm@${PNPM_VERSION}" >/dev/null 2>&1 && command -v pnpm >/dev/null 2>&1; then
+      PNPM=(pnpm)
+      return 0
+    fi
+  fi
+  mkdir -p "$SOLDAR_HOME/bin"
+  local shim_ok=0
+  for attempt in 1 2 3; do
+    if cat > "$SOLDAR_HOME/bin/pnpm" <<'SHIM_EOF' 2>/dev/null; then
+#!/usr/bin/env sh
+exec npx -y pnpm@12.21.0 "$@"
+SHIM_EOF
+      shim_ok=1
+      break
+    fi
+    sleep 5
+  done
+  [ "$shim_ok" = "1" ] || die "Could not set up pnpm. Check the disk and run the installer again."
+  chmod +x "$SOLDAR_HOME/bin/pnpm"
+  export PATH="$SOLDAR_HOME/bin:$PATH"
+  PNPM=(pnpm)
+}
+
+install_deps() {
+  echo "Installing Soldar's parts (this takes a minute)..."
+  if "${PNPM[@]}" install; then return 0; fi
+  echo "That install hit a snag. Approving the native parts and trying again..."
+  "${PNPM[@]}" approve-builds better-sqlite3 esbuild isolated-vm vue-demi >/dev/null 2>&1 || true
+  if "${PNPM[@]}" install; then return 0; fi
+  return 1
+}
+
+write_desktop_file() {
+  local dest="$1"
+  cat > "$dest" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Soldar
+Comment=Workflow automation
+Exec="$APP_DIR/soldar.sh"
+Icon=$APP_DIR/apps/web/public/icon.svg
+Terminal=false
+Categories=Utility;
+StartupWMClass=soldar
+EOF
+  chmod +x "$dest"
+}
+
+install_desktop_icons() {
+  mkdir -p "$HOME/.local/share/applications"
+  local app_file="$HOME/.local/share/applications/soldar.desktop"
+  write_desktop_file "$app_file"
+
+  local desktop_dir
+  desktop_dir="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
+  local desk_file=""
+  if [ -d "$desktop_dir" ]; then
+    desk_file="$desktop_dir/soldar.desktop"
+    write_desktop_file "$desk_file"
+  fi
+
+  # Mark the icons trusted so a double-click starts the app instead of
+  # opening a text editor. If that fails, the note at the end covers it.
+  if command -v gio >/dev/null 2>&1; then
+    gio set "$app_file" metadata::trusted true 2>/dev/null || TRUST_FAILED=1
+    if [ -n "$desk_file" ]; then
+      gio set "$desk_file" metadata::trusted true 2>/dev/null || TRUST_FAILED=1
+    fi
+  else
+    TRUST_FAILED=1
+  fi
+}
+
+# Prove the install works before claiming success: start the real server
+# and wait for it to answer. If Soldar is already running, that counts.
+verify_install() {
+  [ -f "$APP_DIR/apps/server/dist/index.js" ] || die "The server did not build. See the build output above."
+  [ -f "$APP_DIR/apps/web/dist/index.html" ] || die "The web app did not build. See the build output above."
+  if server_healthy; then
+    echo "Soldar is already running, and it answers. Good."
+    return 0
+  fi
+  echo "Starting Soldar once to make sure it works..."
+  node "$APP_DIR/apps/server/dist/index.js" >>"$APP_DIR/soldar.log" 2>&1 &
+  local pid=$!
+  local ok=0
+  # A cold first start on a slow PC can take a while; give it a minute.
+  for ((i = 0; i < 60; i++)); do
+    if server_healthy; then ok=1; break; fi
+    if ! kill -0 "$pid" 2>/dev/null; then break; fi
+    sleep 1
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  if [ "$ok" != "1" ]; then
+    echo "What Soldar said before it stopped:" >&2
+    tail -20 "$APP_DIR/soldar.log" 2>/dev/null >&2 || true
+    die "Soldar started but did not answer on port ${SOLDAR_PORT:-5678}. See $APP_DIR/soldar.log for what it said."
+  fi
+  echo "Soldar started and answered. The install works."
+}
+
+main() {
+  echo "Installing Soldar..."
+  echo ""
+  command -v curl >/dev/null 2>&1 || die "curl is needed to install Soldar and it is not on this computer."
+
+  cd "$APP_DIR"
+
+  # The desktop icon runs soldar.sh directly, so make sure it is executable
+  # no matter how this folder arrived (a zip or a clone can drop the bit).
+  [ -f "$APP_DIR/soldar.sh" ] || die "soldar.sh is missing from this folder, so the install cannot finish."
+  chmod +x "$APP_DIR/soldar.sh"
+
+  ensure_node
+  resolve_pnpm
+
+  if ! install_deps; then
+    if [ "$USING_BUNDLED_NODE" = "0" ]; then
+      echo "Trying again with Soldar's own copy of Node..."
+      install_bundled_node
+      USING_BUNDLED_NODE=1
+      resolve_pnpm
+      install_deps || die "Soldar's parts would not install. Check the output above."
+    else
+      die "Soldar's parts would not install. Check the output above."
+    fi
+  fi
+
+  echo "Building Soldar..."
+  "${PNPM[@]}" run build || die "The build failed. Check the output above."
+
+  echo "Putting the Soldar icon on the desktop and in the menu..."
+  install_desktop_icons
+
+  verify_install
+
+  echo ""
+  echo "Soldar is installed."
+  echo "Double-click the Soldar icon on your desktop (or find Soldar in your applications menu) to open it."
+  if [ "$TRUST_FAILED" = "1" ]; then
+    echo ""
+    echo "One thing: if double-clicking the Soldar icon opens a text editor"
+    echo "instead of starting the app, right-click the icon and choose"
+    echo "Allow Launching, then double-click it again."
+  fi
+}
+
+main "$@"

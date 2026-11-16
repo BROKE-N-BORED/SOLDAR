@@ -1,7 +1,19 @@
-// Drizzle schema for the Soldar SQLite database (Phase 1: executions only.
-// workflows / credentials / settings tables arrive with the server in Phase 2+).
+// Drizzle schema for the Soldar SQLite database (Phase 2: executions +
+// workflows. Credentials / settings tables arrive with the server in Phase 4+).
 
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+
+export const workflows = sqliteTable('workflows', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  active: integer('active', { mode: 'boolean' }).notNull().default(false),
+  /** The full workflow JSON, stringified. */
+  dataJson: text('data_json').notNull(),
+  /** Epoch milliseconds. */
+  createdAt: integer('created_at').notNull(),
+  /** Epoch milliseconds. */
+  updatedAt: integer('updated_at').notNull(),
+});
 
 export const executions = sqliteTable('executions', {
   id: text('id').primaryKey(),

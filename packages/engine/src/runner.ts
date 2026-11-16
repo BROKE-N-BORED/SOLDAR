@@ -51,6 +51,10 @@ export interface RunOptions {
   triggerData?: Item[];
   /** Where executions are stored. If omitted, the run is not persisted. */
   storage?: Storage;
+  /** Called right after the execution record is created (before any node
+   *  runs), with the execution id. The server uses it to hand the id to
+   *  the UI so it can subscribe to live progress. */
+  onExecutionStart?: (executionId: string) => void;
   /** Called after each node finishes (or fails, or is skipped). */
   onStep?: (step: RunStepResult) => void;
   log?: (msg: string) => void;
@@ -101,6 +105,7 @@ export async function runWorkflow(
     startedAt,
   });
   const executionId = execution?.id ?? null;
+  if (executionId) options.onExecutionStart?.(executionId);
 
   const steps: RunStepResult[] = [];
   // Node outputs by node id, for wiring; and by node name, for $node["Name"].

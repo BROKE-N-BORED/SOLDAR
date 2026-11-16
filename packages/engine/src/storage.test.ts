@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createStorage, type Storage } from './storage.js';
+import { createStorage, type Storage, type WorkflowStore } from './storage.js';
+import type { Workflow } from './types.js';
 
 describe('storage', () => {
   let dir: string;
@@ -107,5 +108,94 @@ describe('storage', () => {
     reopened.close();
     // Prevent afterEach from double-closing the original handle.
     storage = reopened;
+  });
+});
+
+describe('workflow storage', () => {
+  let dir: string;
+  let storage: Storage & WorkflowStore;
+
+  const sample = (overrides: Partial<Workflow> = {}): Workflow => ({
+    id: 'wf_1',
+    name: 'Hello',
+    active: false,
+    nodes: [
+      {
+        id: 'n1',
+        type: 'manual-trigger',
+        name: 'Start',
+        position: [100, 100],
+        parameters: {},
+      },
+    ],
+    connections: [],
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'soldar-workflow-test-'));
+    storage = createStorage(join(dir, 'test.db'));
+  });
+
+  afterEach(() => {
+    storage.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('creates a workflow and reads it back', () => {
+    const created = storage.createWorkflow(sample());
+    expect(created.id).toBe('wf_1');
+    expect(created.name).toBe('Hello');
+    expect(JSON.parse(created.dataJson)).toEqual(sample());
+
+    const read = storage.getWorkflow('wf_1');
+    expect(read).toEqual(created);
+  });
+
+  it('lists workflows newest-first and updates one', () => {
+    storage.createWorkflow(sample());
+    storage.createWorkflow(sample({ id: 'wf_2', name: 'Second' }));
+    const listed = storage.listWorkflows();
+    expect(listed).toHaveLength(2);
+    expect(listed[0].id).toBe('wf_2');
+
+    const updated = storage.updateWorkflow('wf_1', sample({ name: 'Renamed' }));
+    expect(updated?.name).toBe('Renamed');
+    expect(JSON.parse(updated!.dataJson).name).toBe('Renamed');
+    expect(storage.updateWorkflow('wf_nope', sample())).toBeUndefined();
+  });
+
+  it('toggles active in the column and in the stored JSON', () => {
+    storage.createWorkflow(sample());
+    const toggled = storage.setWorkflowActive('wf_1', true);
+    expect(toggled?.active).toBe(true);
+    expect(JSON.parse(toggled!.dataJson).active).toBe(true);
+    expect(storage.setWorkflowActive('wf_nope', true)).toBeUndefined();
+  });
+
+  it('deletes a workflow', () => {
+    storage.createWorkflow(sample());
+    storage.deleteWorkflow('wf_1');
+    expect(storage.getWorkflow('wf_1')).toBeUndefined();
+    expect(storage.listWorkflows()).toEqual([]);
+  });
+
+  it('lists executions newest-first, optionally per workflow', () => {
+    const a = storage.createExecution({
+      workflowId: 'wf_1',
+      workflowName: 'Hello',
+      trigger: 'manual',
+      startedAt: 1000,
+    });
+    const b = storage.createExecution({
+      workflowId: 'wf_2',
+      workflowName: 'Other',
+      trigger: 'manual',
+      startedAt: 2000,
+    });
+    const all = storage.listExecutions();
+    expect(all.map((e) => e.id)).toEqual([b.id, a.id]);
+    expect(storage.listExecutions('wf_1').map((e) => e.id)).toEqual([a.id]);
+    expect(storage.listExecutions('wf_1', 1)).toHaveLength(1);
   });
 });

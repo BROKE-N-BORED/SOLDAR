@@ -4,10 +4,11 @@
 
 import { randomBytes } from 'node:crypto';
 import Database from 'better-sqlite3';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { executions, executionSteps } from './schema.js';
+import { executions, executionSteps, workflows } from './schema.js';
+import type { Workflow } from './types.js';
 
 export interface ExecutionRecord {
   id: string;
@@ -34,6 +35,29 @@ export interface StepRecord {
   finishedAt: number;
 }
 
+export interface WorkflowRecord {
+  id: string;
+  name: string;
+  active: boolean;
+  /** The full workflow JSON, stringified. */
+  dataJson: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** The storage surface the server needs for workflows. Kept separate from
+ *  Storage so the runner's surface stays small. The name/active columns
+ *  mirror the same fields inside the stored workflow JSON. */
+export interface WorkflowStore {
+  createWorkflow(data: Workflow): WorkflowRecord;
+  getWorkflow(id: string): WorkflowRecord | undefined;
+  listWorkflows(): WorkflowRecord[];
+  updateWorkflow(id: string, data: Workflow): WorkflowRecord | undefined;
+  setWorkflowActive(id: string, active: boolean): WorkflowRecord | undefined;
+  deleteWorkflow(id: string): void;
+  listExecutions(workflowId?: string, limit?: number): ExecutionRecord[];
+}
+
 /** The storage surface the runner needs. Kept small so tests can fake it. */
 export interface Storage {
   createExecution(input: {
@@ -57,12 +81,22 @@ function newId(prefix: string): string {
 }
 
 /** Open (or create) the database at `dbPath` and make sure the tables exist. */
-export function createStorage(dbPath: string): Storage {
+export function createStorage(dbPath: string): Storage & WorkflowStore {
   const sqlite = new Database(dbPath);
   const db: BetterSQLite3Database = drizzle(sqlite);
 
-  // Phase 1 has no migration runner; the tables are created if missing.
+  // No migration runner yet; the tables are created if missing.
   // The DDL matches schema.ts exactly.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS workflows (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0,
+      data_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
   db.run(sql`
     CREATE TABLE IF NOT EXISTS executions (
       id TEXT PRIMARY KEY,
@@ -133,6 +167,99 @@ export function createStorage(dbPath: string): Storage {
         .where(eq(executionSteps.executionId, executionId))
         .all();
       return rows as StepRecord[];
+    },
+
+    listExecutions(workflowId, limit = 50) {
+      const rows = workflowId
+        ? db
+            .select()
+            .from(executions)
+            .where(eq(executions.workflowId, workflowId))
+            .orderBy(desc(executions.startedAt), desc(sql`"executions"."rowid"`))
+            .limit(limit)
+            .all()
+        : db
+            .select()
+            .from(executions)
+            .orderBy(desc(executions.startedAt), desc(sql`"executions"."rowid"`))
+            .limit(limit)
+            .all();
+      return rows as ExecutionRecord[];
+    },
+
+    createWorkflow(data) {
+      const now = Date.now();
+      const record: WorkflowRecord = {
+        id: data.id,
+        name: data.name,
+        active: data.active,
+        dataJson: JSON.stringify(data),
+        createdAt: now,
+        updatedAt: now,
+      };
+      db.insert(workflows).values(record).run();
+      return record;
+    },
+
+    getWorkflow(id) {
+      const row = db
+        .select()
+        .from(workflows)
+        .where(eq(workflows.id, id))
+        .get();
+      return row as WorkflowRecord | undefined;
+    },
+
+    listWorkflows() {
+      // rowid breaks ties between rows stamped in the same millisecond, so
+      // the order is deterministic: the later-inserted row comes first.
+      const rows = db
+        .select()
+        .from(workflows)
+        .orderBy(desc(workflows.updatedAt), desc(sql`"workflows"."rowid"`))
+        .all();
+      return rows as WorkflowRecord[];
+    },
+
+    updateWorkflow(id, data) {
+      const existing = db
+        .select()
+        .from(workflows)
+        .where(eq(workflows.id, id))
+        .get() as WorkflowRecord | undefined;
+      if (!existing) return undefined;
+      const record: WorkflowRecord = {
+        ...existing,
+        name: data.name,
+        active: data.active,
+        dataJson: JSON.stringify(data),
+        updatedAt: Date.now(),
+      };
+      db.update(workflows).set(record).where(eq(workflows.id, id)).run();
+      return record;
+    },
+
+    setWorkflowActive(id, active) {
+      const existing = db
+        .select()
+        .from(workflows)
+        .where(eq(workflows.id, id))
+        .get() as WorkflowRecord | undefined;
+      if (!existing) return undefined;
+      const data = JSON.parse(existing.dataJson) as Workflow;
+      data.active = active;
+      const record: WorkflowRecord = {
+        ...existing,
+        active,
+        dataJson: JSON.stringify(data),
+        updatedAt: Date.now(),
+      };
+      db.update(workflows).set(record).where(eq(workflows.id, id)).run();
+      return record;
+    },
+
+    deleteWorkflow(id) {
+      db.delete(workflows).where(eq(workflows.id, id)).run();
     },
 
     close() {

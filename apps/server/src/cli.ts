@@ -6,7 +6,9 @@
 // The run is stored in SQLite (default ./soldar.db) and a summary is
 // printed. Exit 0 on success, 1 on a failed run or bad input, 2 on bad usage.
 
+import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import {
   createStorage,
   runWorkflow,
@@ -177,6 +179,8 @@ async function main(): Promise<void> {
     );
   }
 
+  // --db may point at a directory that does not exist yet.
+  mkdirSync(dirname(resolve(args.dbPath)), { recursive: true });
   const storage = createStorage(args.dbPath);
   try {
     let result: RunResult;
