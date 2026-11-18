@@ -1,6 +1,11 @@
 // Graph validation and run order (topological sort).
 
-import type { Workflow, WorkflowNode } from './types.js';
+import type { NodeDefinition, Workflow, WorkflowNode } from './types.js';
+
+/** Deepest chain the cycle check follows before refusing. A workflow with
+ *  a longer chain than this is almost certainly a mistake, and the
+ *  recursive check would overflow the stack first. */
+const MAX_CYCLE_DEPTH = 1000;
 
 /** A problem with the workflow graph, phrased for a person, not a log. */
 export class WorkflowValidationError extends Error {
@@ -13,11 +18,19 @@ export class WorkflowValidationError extends Error {
 /**
  * Validate a workflow graph: nodes are well-formed, names and ids are
  * unique, every connection points at a real node, and there are no cycles.
- * Throws WorkflowValidationError on the first problem found.
+ * When node definitions are passed, node types and connection outputs are
+ * checked against them too. Throws WorkflowValidationError on the first
+ * problem found.
  */
-export function validateWorkflow(workflow: Workflow): void {
+export function validateWorkflow(workflow: Workflow, definitions?: NodeDefinition[]): void {
   if (!workflow || typeof workflow !== 'object') {
     throw new WorkflowValidationError('Workflow is not an object.');
+  }
+  if (typeof workflow.id !== 'string' || workflow.id === '') {
+    throw new WorkflowValidationError('Every workflow needs an id.');
+  }
+  if (typeof workflow.name !== 'string' || workflow.name === '') {
+    throw new WorkflowValidationError('Every workflow needs a name.');
   }
   if (!Array.isArray(workflow.nodes) || workflow.nodes.length === 0) {
     throw new WorkflowValidationError('Workflow has no nodes.');
@@ -60,8 +73,36 @@ export function validateWorkflow(workflow: Workflow): void {
         `Node "${node.name}" has no parameters object. Use {} for no settings.`,
       );
     }
+    // A missing position is fine — the editor gives it a default. A broken
+    // one (not two numbers) would throw the whole editor page.
+    if (node.position !== undefined && node.position !== null) {
+      const pos: unknown = node.position;
+      if (
+        !Array.isArray(pos) ||
+        pos.length !== 2 ||
+        !pos.every((n) => typeof n === 'number' && Number.isFinite(n))
+      ) {
+        throw new WorkflowValidationError(
+          `Node "${node.name}" has a broken position. Positions are two numbers, like [100, 200].`,
+        );
+      }
+    }
   }
 
+  // When the node definitions are known, every node type must exist.
+  let byType: Map<string, NodeDefinition> | null = null;
+  if (definitions) {
+    byType = new Map(definitions.map((d) => [d.type, d]));
+    for (const node of workflow.nodes) {
+      if (!byType.has(node.type)) {
+        throw new WorkflowValidationError(
+          `Node "${node.name}" uses unknown node type "${node.type}".`,
+        );
+      }
+    }
+  }
+
+  const seenConnections = new Set<string>();
   for (const conn of workflow.connections) {
     if (!conn || typeof conn.from !== 'string' || typeof conn.to !== 'string') {
       throw new WorkflowValidationError(
@@ -82,6 +123,28 @@ export function validateWorkflow(workflow: Workflow): void {
       throw new WorkflowValidationError(
         `Node "${conn.from}" connects to itself.`,
       );
+    }
+    const output = conn.output ?? 'main';
+    const key = `${conn.from}|${output}|${conn.to}`;
+    if (seenConnections.has(key)) {
+      throw new WorkflowValidationError(
+        `Two identical wires run from "${conn.from}" to "${conn.to}". One is ` +
+          `enough — duplicates make the next node process everything twice.`,
+      );
+    }
+    seenConnections.add(key);
+    // When the node definitions are known, the wire must leave through an
+    // output the source node actually declares — otherwise the whole
+    // downstream branch is silently skipped.
+    if (byType) {
+      const source = workflow.nodes.find((n) => n.id === conn.from)!;
+      const def = byType.get(source.type)!;
+      if (!def.outputs.includes(output)) {
+        throw new WorkflowValidationError(
+          `The wire from "${source.name}" uses output "${output}", but that ` +
+            `node only has ${def.outputs.map((o) => `"${o}"`).join(', ')}.`,
+        );
+      }
     }
   }
 
@@ -106,7 +169,13 @@ function findCycle(workflow: Workflow): string[] | null {
   const state = new Map<string, number>();
   const path: string[] = [];
 
-  const visit = (id: string): string[] | null => {
+  const visit = (id: string, depth: number): string[] | null => {
+    if (depth > MAX_CYCLE_DEPTH) {
+      throw new WorkflowValidationError(
+        `The workflow chain runs deeper than ${MAX_CYCLE_DEPTH} nodes. ` +
+          `That is almost certainly a mistake — split the workflow into smaller pieces.`,
+      );
+    }
     state.set(id, 1);
     path.push(id);
     for (const next of outgoing.get(id) ?? []) {
@@ -117,7 +186,7 @@ function findCycle(workflow: Workflow): string[] | null {
         return [...path.slice(start), next];
       }
       if (s === 0) {
-        const found = visit(next);
+        const found = visit(next, depth + 1);
         if (found) return found;
       }
     }
@@ -128,7 +197,7 @@ function findCycle(workflow: Workflow): string[] | null {
 
   for (const node of workflow.nodes) {
     if ((state.get(node.id) ?? 0) === 0) {
-      const found = visit(node.id);
+      const found = visit(node.id, 1);
       if (found) return found;
     }
   }
@@ -158,13 +227,16 @@ export function topologicalSort(workflow: Workflow): WorkflowNode[] {
   }
 
   // Start with nodes that have nothing feeding into them, in workflow order.
+  // The queue is read by index, not shift(): shift() is O(n) per node and
+  // makes the whole sort O(n^2) on very large workflows.
   const queue: string[] = workflow.nodes
     .filter((n) => inDegree.get(n.id) === 0)
     .map((n) => n.id);
   const sorted: WorkflowNode[] = [];
+  let head = 0;
 
-  while (queue.length > 0) {
-    const id = queue.shift()!;
+  while (head < queue.length) {
+    const id = queue[head++]!;
     sorted.push(byId.get(id)!);
     for (const next of outgoing.get(id) ?? []) {
       const remaining = (inDegree.get(next) ?? 0) - 1;

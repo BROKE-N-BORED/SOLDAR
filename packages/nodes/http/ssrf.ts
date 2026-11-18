@@ -11,6 +11,7 @@
 // workflows that genuinely need local calls.
 
 import { lookup } from 'node:dns/promises';
+import type { LookupFunction } from 'node:net';
 
 // ---------------------------------------------------------------------------
 // IP parsing
@@ -100,6 +101,7 @@ const IPV4_PRIVATE: [number, number][] = [
   [0xc0000200, 24], // 192.0.2.0/24 — TEST-NET-1
   [0xc0a80000, 16], // 192.168.0.0/16 — private
   [0xc6336400, 24], // 198.51.100.0/24 — TEST-NET-2
+  [0xc6120000, 15], // 198.18.0.0/15 — benchmarking (not public internet)
   [0xcb007100, 24], // 203.0.113.0/24 — TEST-NET-3
   [0xe0000000, 4], // 224.0.0.0/4 — multicast
   [0xf0000000, 4], // 240.0.0.0/4 — reserved (includes broadcast)
@@ -180,13 +182,18 @@ function refused(host: string, address: string): Error {
 }
 
 /**
- * Throw unless the URL is safe to call: http(s) only, and — unless the
- * workflow opted out — every address the hostname resolves to is public.
+ * Resolve a hostname and check every address it resolves to, returning the
+ * checked addresses. The caller must fetch using ONLY these addresses (see
+ * createPinnedLookup), so a hostile DNS cannot slip a different address
+ * past the check between the check and the fetch. Throws on refusal, on a
+ * bad URL, or when the host does not resolve. Returns the literal itself
+ * for an IP hostname, and [] when the workflow opted out (no check, no
+ * pinning — the fetch uses normal DNS).
  */
-export async function assertUrlAllowed(
+export async function resolveCheckedAddresses(
   rawUrl: string,
   options: SsrfOptions = {},
-): Promise<void> {
+): Promise<string[]> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -196,7 +203,7 @@ export async function assertUrlAllowed(
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error(`Only http and https URLs are allowed, not "${url.protocol}".`);
   }
-  if (options.allowPrivate) return;
+  if (options.allowPrivate) return [];
 
   // WHATWG URL normalizes IPv4 forms (127.1, 0x7f000001, 2130706433) to
   // dotted quads, so a literal check here catches the obfuscated forms too.
@@ -206,12 +213,12 @@ export async function assertUrlAllowed(
   const v4 = parseIpv4(host);
   if (v4 !== null) {
     if (isPrivateIpv4(v4)) throw refused(host, host);
-    return;
+    return [host];
   }
   if (host.includes(':')) {
     const v6 = parseIpv6(host);
     if (v6 !== null && isPrivateIpv6(v6)) throw refused(host, host);
-    return;
+    return [host];
   }
 
   const resolve = options.resolveHost ?? defaultResolve;
@@ -221,7 +228,68 @@ export async function assertUrlAllowed(
   } catch {
     throw new Error(`Could not resolve host "${host}".`);
   }
+  if (addresses.length === 0) {
+    throw new Error(`Could not resolve host "${host}".`);
+  }
   for (const address of addresses) {
     if (isPrivateIp(address)) throw refused(host, address);
   }
+  return addresses;
+}
+
+/**
+ * A DNS lookup function that answers with the checked addresses only — it
+ * never consults real DNS. Pass it as the `lookup` option of an http/https
+ * request so the socket connects to exactly the address the SSRF guard
+ * checked. The first address is used; if it is unreachable the request
+ * fails rather than falling back to an unchecked address.
+ */
+export function createPinnedLookup(addresses: string[]): LookupFunction {
+  if (addresses.length === 0) {
+    throw new Error('createPinnedLookup needs at least one checked address.');
+  }
+  const familyOf = (address: string): number => (address.includes(':') ? 6 : 4);
+  const pinned = (
+    hostname: string,
+    options:
+      | { all?: boolean; family?: number }
+      | ((err: Error | null, address?: unknown, family?: number) => void),
+    callback?: (err: Error | null, address?: unknown, family?: number) => void,
+  ): void => {
+    void hostname;
+    // Node's net layer always calls with three arguments, but the lookup
+    // type also allows (hostname, callback) — handle both.
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
+    }
+    const done = callback as (
+      err: Error | null,
+      address?: unknown,
+      family?: number,
+    ) => void;
+    if ((options as { all?: boolean }).all) {
+      done(
+        null,
+        addresses.map((address) => ({ address, family: familyOf(address) })),
+      );
+    } else {
+      done(null, addresses[0], familyOf(addresses[0]));
+    }
+  };
+  return pinned as unknown as LookupFunction;
+}
+
+/**
+ * Throw unless the URL is safe to call: http(s) only, and — unless the
+ * workflow opted out — every address the hostname resolves to is public.
+ * This is the check half of the guard; fetching must pair it with
+ * resolveCheckedAddresses + createPinnedLookup so the checked addresses
+ * are the ones actually connected to.
+ */
+export async function assertUrlAllowed(
+  rawUrl: string,
+  options: SsrfOptions = {},
+): Promise<void> {
+  await resolveCheckedAddresses(rawUrl, options);
 }

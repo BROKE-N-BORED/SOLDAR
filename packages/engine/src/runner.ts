@@ -58,6 +58,18 @@ export interface RunOptions {
   /** Called after each node finishes (or fails, or is skipped). */
   onStep?: (step: RunStepResult) => void;
   log?: (msg: string) => void;
+  /**
+   * Abort signal for cancelling the run (the Stop button). Checked between
+   * nodes and between items; a node already running finishes its current
+   * call first, then the run stops.
+   */
+  signal?: AbortSignal;
+  /**
+   * Warnings about the workflow itself — wiring that contradicts a node's
+   * declared inputs. Separate from log so the server can file them as
+   * warnings.
+   */
+  warn?: (msg: string) => void;
 }
 
 function errorMessage(err: unknown): string {
@@ -79,16 +91,10 @@ export async function runWorkflow(
   const startedAt = Date.now();
 
   // Validation happens before anything is recorded: an invalid workflow
-  // never starts an execution.
-  validateWorkflow(workflow);
+  // never starts an execution. Definitions are passed so node types and
+  // connection outputs are checked against the registry too.
   const registry = new Map(definitions.map((d) => [d.type, d]));
-  for (const node of workflow.nodes) {
-    if (!registry.has(node.type)) {
-      throw new WorkflowValidationError(
-        `Node "${node.name}" uses unknown node type "${node.type}".`,
-      );
-    }
-  }
+  validateWorkflow(workflow, definitions);
   const order = topologicalSort(workflow);
 
   const incoming = new Map<string, { from: string; output: string }[]>();
@@ -153,9 +159,27 @@ export async function runWorkflow(
 
   try {
     for (const node of order) {
+      if (options.signal?.aborted) {
+        return finish('error', 'Run stopped.');
+      }
       const definition = registry.get(node.type)!;
       const nodeStarted = Date.now();
       const wires = incoming.get(node.id) ?? [];
+
+      // The inputs declaration is a promise about wiring: a trigger with
+      // wires, or a normal node with none, runs anyway but says so.
+      const warn = options.warn ?? (() => {});
+      if (definition.inputs === 0 && wires.length > 0) {
+        warn(
+          `Node "${node.name}" is a trigger (it takes no inputs) but has ` +
+            `wires feeding into it. The wires win and it runs as a normal node.`,
+        );
+      } else if (definition.inputs > 0 && wires.length === 0) {
+        warn(
+          `Node "${node.name}" takes an input but nothing feeds into it, ` +
+            `so it runs as a trigger with the trigger data.`,
+        );
+      }
 
       // Gather this node's input from its incoming wires.
       let input: Item[];
@@ -211,12 +235,20 @@ export async function runWorkflow(
       };
 
       try {
+        // Code-type settings hold literal code — a {{ in a script is not
+        // a template and must reach the node untouched.
+        const codeParams = new Set(
+          definition.parameters
+            .filter((p) => p.type === 'code')
+            .map((p) => p.name),
+        );
         let output: NodeOutput;
         if (definition.executeMode === 'allItems') {
           // One call with every item; params evaluated against the first.
           const params = evaluateParameters(
             node.parameters,
             scopeFor(input[0] ?? { json: {} }),
+            codeParams,
           );
           output = await definition.execute({
             ...baseContext,
@@ -227,7 +259,10 @@ export async function runWorkflow(
           // One call per item, params evaluated against that item.
           output = emptyOutput(definition);
           for (const item of input) {
-            const params = evaluateParameters(node.parameters, scopeFor(item));
+            if (options.signal?.aborted) {
+              return finish('error', 'Run stopped.');
+            }
+            const params = evaluateParameters(node.parameters, scopeFor(item), codeParams);
             const result = await definition.execute({
               ...baseContext,
               input: [item],
@@ -250,7 +285,10 @@ export async function runWorkflow(
           finishedAt: Date.now(),
         };
         outputsById.set(node.id, output);
-        outputsByName.set(node.name, output.main ?? []);
+        // $node["Name"] sees every output, not just "main": an IF node's
+        // true/false branches are both branch data, and expressions
+        // against them used to come back empty.
+        outputsByName.set(node.name, Object.values(output).flat());
         recordStep(step);
       } catch (err) {
         const message = errorMessage(err);
@@ -270,6 +308,12 @@ export async function runWorkflow(
       }
     }
 
+    // Aborted during the last node: the run still stops, even though every
+    // node finished — the user asked for it to stop, so the result is
+    // discarded.
+    if (options.signal?.aborted) {
+      return finish('error', 'Run stopped.');
+    }
     return finish('success');
   } catch (err) {
     // Something failed outside a node (e.g. storage). Record it if we can.

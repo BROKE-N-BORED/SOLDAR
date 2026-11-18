@@ -12,7 +12,11 @@ export function registerExecutionRoutes(app: FastifyInstance, ctx: RouteContext)
     const limit = Number.isFinite(rawLimit)
       ? Math.min(200, Math.max(1, Math.floor(rawLimit)))
       : 50;
-    return ctx.storage.listExecutions(workflowId, limit);
+    const rawOffset = Number(query.offset ?? 0);
+    const offset = Number.isFinite(rawOffset)
+      ? Math.max(0, Math.floor(rawOffset))
+      : 0;
+    return ctx.storage.listExecutions(workflowId, limit, offset);
   });
 
   app.get('/api/executions/:id', async (req, reply) => {
@@ -23,5 +27,35 @@ export function registerExecutionRoutes(app: FastifyInstance, ctx: RouteContext)
       return { error: 'No run with that id.' };
     }
     return { execution, steps: ctx.storage.listSteps(id) };
+  });
+
+  app.delete('/api/executions/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const execution = ctx.storage.getExecution(id);
+    if (!execution) {
+      reply.code(404);
+      return { error: 'No run with that id.' };
+    }
+    ctx.storage.deleteExecution(id);
+    reply.code(204);
+    return;
+  });
+
+  app.post('/api/executions/:id/cancel', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const execution = ctx.storage.getExecution(id);
+    if (!execution) {
+      reply.code(404);
+      return { error: 'No run with that id.' };
+    }
+    if (execution.status !== 'running') {
+      reply.code(409);
+      return { error: 'That run already finished.' };
+    }
+    if (!ctx.runs.cancel(id)) {
+      reply.code(409);
+      return { error: 'That run is not running any more.' };
+    }
+    return { cancelled: true };
   });
 }

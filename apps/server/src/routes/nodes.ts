@@ -15,6 +15,7 @@ export function registerNodeRoutes(app: FastifyInstance, _ctx: RouteContext): vo
       inputs: node.inputs,
       outputs: node.outputs,
       parameters: node.parameters,
+      icon: node.icon,
     }));
   });
 }

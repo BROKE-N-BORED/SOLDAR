@@ -16,6 +16,15 @@ DATA_DIR="${SOLDAR_DATA_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/soldar}"
 LOG="$DATA_DIR/launcher.log"
 mkdir -p "$DATA_DIR" 2>/dev/null || LOG="$APP_DIR/soldar.log"
 
+# A staged update waits here when the user said "Later" to the restart
+# prompt (or the app was closed with one staged). Apply it before starting
+# the server, so the app opens on the new version. A failed apply leaves
+# the old version in place and never blocks the launch.
+if [ -f "$DATA_DIR/update/pending-update.json" ] && [ -f "$APP_DIR/scripts/apply-update.sh" ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') Applying the pending Soldar update..." >>"$LOG"
+  bash "$APP_DIR/scripts/apply-update.sh" "$APP_DIR" "$DATA_DIR" "$PORT" --from-launcher >>"$LOG" 2>&1 || true
+fi
+
 resolve_node() {
   # The installer's own copy of Node wins; otherwise use the system one.
   if [ -x "$HOME/.local/soldar/node/bin/node" ]; then
@@ -56,8 +65,24 @@ if [ ! -f "$APP_DIR/apps/server/dist/index.js" ]; then
   exit 1
 fi
 
+# A tab was opened at this time (seconds since the epoch), so a second
+# click soon after does not pile up another tab for the same app.
+LAST_OPEN_FILE="$DATA_DIR/launcher-last-open"
+
+open_app() {
+  if command -v xdg-open >/dev/null 2>&1; then
+    nohup xdg-open "http://127.0.0.1:${PORT}" >/dev/null 2>&1 &
+    date +%s > "$LAST_OPEN_FILE" 2>/dev/null || true
+  else
+    show_error "Soldar is running at http://127.0.0.1:${PORT} but no browser opener was found on this computer."
+    exit 1
+  fi
+}
+
+STARTED_BY_ME=0
 if ! server_healthy; then
   nohup "$NODE" "$APP_DIR/apps/server/dist/index.js" >>"$LOG" 2>&1 &
+  STARTED_BY_ME=1
   ok=0
   # A cold first start on a slow PC can take a while; give it a minute.
   for ((i = 0; i < 60; i++)); do
@@ -71,11 +96,27 @@ if ! server_healthy; then
 fi
 
 # The server is up (it was already running, or this launch started it).
-# Open the app and get out of the way.
-if command -v xdg-open >/dev/null 2>&1; then
-  nohup xdg-open "http://127.0.0.1:${PORT}" >/dev/null 2>&1 &
-else
-  show_error "Soldar is running at http://127.0.0.1:${PORT} but no browser opener was found on this computer."
-  exit 1
+if [ "$STARTED_BY_ME" = "1" ]; then
+  # A fresh server means a fresh session: open the app.
+  open_app
+  exit 0
 fi
+# The server was already running. Opening a tab on every click piles up
+# tabs, so skip the new tab if one was opened in the last ten minutes —
+# the app is already open. After that, open one again: the old tab was
+# probably closed by then.
+last_open=0
+if [ -f "$LAST_OPEN_FILE" ]; then
+  last_open="$(cat "$LAST_OPEN_FILE" 2>/dev/null || echo 0)"
+  case "$last_open" in ''|*[!0-9]*) last_open=0 ;; esac
+fi
+now="$(date +%s)"
+if [ "$((now - last_open))" -lt 600 ] && [ "$last_open" != "0" ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') Soldar is already running; not opening another tab." >>"$LOG"
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send "Soldar" "Soldar is already running. Open http://127.0.0.1:${PORT} in your browser." 2>/dev/null || true
+  fi
+  exit 0
+fi
+open_app
 exit 0

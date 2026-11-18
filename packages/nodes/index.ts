@@ -16,6 +16,22 @@ export const allNodes: NodeDefinition[] = [
   httpNode,
 ];
 
+/** Two definitions with the same type would silently shadow one another —
+ *  refuse to start instead. */
+export function assertNoDuplicateTypes(nodes: NodeDefinition[]): void {
+  const seen = new Set<string>();
+  for (const node of nodes) {
+    if (seen.has(node.type)) {
+      throw new Error(
+        `Duplicate node type "${node.type}" in the registry. Node types must be unique.`,
+      );
+    }
+    seen.add(node.type);
+  }
+}
+
+assertNoDuplicateTypes(allNodes);
+
 export function getNodeDefinition(type: string): NodeDefinition | undefined {
   return allNodes.find((node) => node.type === type);
 }

@@ -12,6 +12,7 @@ import {
   type Workflow,
 } from '@soldar/engine';
 import { allNodes } from '@soldar/nodes';
+import type { Logger } from './logger.js';
 
 export interface StepEvent {
   type: 'step';
@@ -27,10 +28,33 @@ export interface DoneEvent {
 
 export type RunEvent = StepEvent | DoneEvent;
 
+/** Thrown by start() when the concurrent-run cap is already reached. */
+export class RunServiceBusyError extends Error {
+  constructor() {
+    super(
+      'Two runs are already going. Wait for one to finish, or stop it, then try again.',
+    );
+    this.name = 'RunServiceBusyError';
+  }
+}
+
+/**
+ * At most two runs at once: every run is accepted today, and each Code
+ * node can take 128 MB, so heavy runs can freeze the desktop.
+ */
+const MAX_CONCURRENT_RUNS = 2;
+
 export class RunService {
   private listeners = new Map<string, Set<(event: RunEvent) => void>>();
+  /** Abort controllers for runs in flight, by execution id. */
+  private running = new Map<string, AbortController>();
+  /** Every run promise, for waiting out a shutdown. */
+  private inFlight = new Set<Promise<unknown>>();
 
-  constructor(private storage: Storage) {}
+  constructor(
+    private storage: Storage,
+    private logger?: Logger,
+  ) {}
 
   /** Subscribe to live events for one execution. Returns an unsubscribe. */
   subscribe(executionId: string, fn: (event: RunEvent) => void): () => void {
@@ -59,22 +83,32 @@ export class RunService {
   /**
    * Start a run in the background. Resolves with the execution id as soon
    * as the run has started (before the first node runs). The workflow must
-   * already be validated — the caller checks that first.
+   * already be validated — the caller checks that first. Rejects with
+   * RunServiceBusyError when two runs are already going.
    */
   start(workflow: Workflow, triggerData?: Item[]): Promise<string> {
+    if (this.running.size >= MAX_CONCURRENT_RUNS) {
+      return Promise.reject(new RunServiceBusyError());
+    }
+    const controller = new AbortController();
     let executionId = '';
     return new Promise<string>((resolve, reject) => {
-      runWorkflow(workflow, allNodes, {
+      const runPromise = runWorkflow(workflow, allNodes, {
         storage: this.storage,
         triggerData,
+        signal: controller.signal,
+        warn: (msg) => this.logger?.warn(msg),
         onExecutionStart: (id) => {
           executionId = id;
+          this.running.set(id, controller);
           resolve(id);
         },
         onStep: (step) => {
           this.emit(executionId, { type: 'step', executionId, step });
         },
-      })
+      });
+      this.inFlight.add(runPromise);
+      runPromise
         .then((result: RunResult) => {
           const execution = result.executionId
             ? this.storage.getExecution(result.executionId)
@@ -103,7 +137,37 @@ export class RunService {
             }
           }
           reject(err);
+        })
+        .finally(() => {
+          this.inFlight.delete(runPromise);
+          if (executionId) this.running.delete(executionId);
         });
     });
+  }
+
+  /** Stop a run in flight. True when a run was found and signalled. */
+  cancel(executionId: string): boolean {
+    const controller = this.running.get(executionId);
+    if (!controller) return false;
+    controller.abort();
+    return true;
+  }
+
+  /** How many runs are in flight right now. */
+  activeCount(): number {
+    return this.running.size;
+  }
+
+  /**
+   * Wait for the runs in flight to finish, so a shutdown does not kill a
+   * run mid-write. Gives up after `timeoutMs` (default 30 s) and lets the
+   * shutdown proceed.
+   */
+  async waitForIdle(timeoutMs = 30000): Promise<void> {
+    if (this.inFlight.size === 0) return;
+    await Promise.race([
+      Promise.allSettled([...this.inFlight]),
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
   }
 }

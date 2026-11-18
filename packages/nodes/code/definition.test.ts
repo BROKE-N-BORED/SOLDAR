@@ -33,7 +33,7 @@ describe('code', () => {
   it('reports sandbox errors plainly', async () => {
     await expect(
       codeNode.execute(ctx([{ json: {} }], { code: 'throw new Error("nope");' })),
-    ).rejects.toThrow('Code node failed: nope');
+    ).rejects.toThrow('nope');
   });
 
   it('declares allItems execution mode', () => {

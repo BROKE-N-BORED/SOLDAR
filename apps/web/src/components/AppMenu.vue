@@ -15,8 +15,26 @@
     </nav>
     <div class="menu-status" :title="statusTitle">
       <span class="status-dot" :class="{ on: connected }" aria-hidden="true"></span>
-      <span class="status-text">{{ connected ? 'Connected' : 'No server' }}</span>
+      <span class="status-text">{{ statusText }}</span>
     </div>
+    <button
+      v-if="!stopping"
+      class="btn btn-secondary btn-small menu-stop"
+      type="button"
+      title="Stop the Soldar server"
+      @click="askingStop = true"
+    >
+      Stop Soldar
+    </button>
+    <ConfirmDialog
+      v-if="askingStop"
+      title="Stop Soldar?"
+      message="The server stops and this page stops working. Start Soldar again from its launcher when you want it back."
+      confirm-label="Stop it"
+      cancel-label="Keep running"
+      @confirm="confirmStop"
+      @cancel="askingStop = false"
+    />
   </header>
 </template>
 
@@ -24,14 +42,24 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { api } from '../api.js';
+import ConfirmDialog from './ConfirmDialog.vue';
 
 const connected = ref(false);
+const stopping = ref(false);
+const askingStop = ref(false);
 let timer: ReturnType<typeof setInterval> | null = null;
 
+const statusText = computed(() => {
+  if (stopping.value) return 'Stopping...';
+  return connected.value ? 'Connected' : 'No server';
+});
+
 const statusTitle = computed(() =>
-  connected.value
-    ? 'The Soldar server is answering.'
-    : 'The Soldar server is not answering. Is it running?',
+  stopping.value
+    ? 'Soldar is stopping. You can close this tab.'
+    : connected.value
+      ? 'The Soldar server is answering.'
+      : 'The Soldar server is not answering. Is it running?',
 );
 
 async function check(): Promise<void> {
@@ -40,6 +68,21 @@ async function check(): Promise<void> {
     connected.value = true;
   } catch {
     connected.value = false;
+  }
+}
+
+async function confirmStop(): Promise<void> {
+  askingStop.value = false;
+  stopping.value = true;
+  connected.value = false;
+  if (timer !== null) {
+    clearInterval(timer);
+    timer = null;
+  }
+  try {
+    await api.shutdownServer();
+  } catch {
+    // The server may close before the reply lands; stopping anyway.
   }
 }
 

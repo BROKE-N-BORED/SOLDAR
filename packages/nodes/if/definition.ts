@@ -30,8 +30,31 @@ function isEmptyValue(value: unknown): boolean {
   return false;
 }
 
-function asComparable(value: unknown): number | string {
-  return typeof value === 'number' ? value : String(value ?? '');
+/** A value as a number, when it plainly is one: real numbers, and strings
+ *  that are only a number ("10", "-2.5"). Anything else is not numeric. */
+function asNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value);
+    return Number.isNaN(n) ? null : n;
+  }
+  return null;
+}
+
+/**
+ * Compare two values: numerically when both sides are numbers (so "10"
+ * beats "9", which alphabetical order gets wrong), alphabetically
+ * otherwise. Returns -1, 0, or 1.
+ */
+function compareValues(left: unknown, right: unknown): number {
+  const lNum = asNumber(left);
+  const rNum = asNumber(right);
+  if (lNum !== null && rNum !== null) {
+    return lNum < rNum ? -1 : lNum > rNum ? 1 : 0;
+  }
+  const lStr = String(left ?? '');
+  const rStr = String(right ?? '');
+  return lStr < rStr ? -1 : lStr > rStr ? 1 : 0;
 }
 
 /** Evaluate one condition against already-evaluated left/right values. */
@@ -55,13 +78,13 @@ export function testCondition(condition: IfCondition): boolean {
       if (Array.isArray(left)) return !left.includes(right);
       return true;
     case 'greaterThan':
-      return asComparable(left) > asComparable(right);
+      return compareValues(left, right) > 0;
     case 'lessThan':
-      return asComparable(left) < asComparable(right);
+      return compareValues(left, right) < 0;
     case 'greaterThanOrEqual':
-      return asComparable(left) >= asComparable(right);
+      return compareValues(left, right) >= 0;
     case 'lessThanOrEqual':
-      return asComparable(left) <= asComparable(right);
+      return compareValues(left, right) <= 0;
     case 'isEmpty':
       return isEmptyValue(left);
     case 'isNotEmpty':
@@ -84,6 +107,7 @@ export const ifNode: NodeDefinition = {
   type: 'if',
   displayName: 'IF',
   description: 'True/false branch on a condition.',
+  icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L21 12 L12 21 L3 12 Z"/><path d="M12 8 L16 12 L12 16"/><path d="M8 12 H12"/></svg>',
   inputs: 1,
   outputs: ['true', 'false'],
   parameters: [

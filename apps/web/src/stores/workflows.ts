@@ -35,6 +35,11 @@ export const useWorkflowsStore = defineStore('workflows', {
       await this.loadList();
       return detail.id;
     },
+    async duplicate(id: string): Promise<string> {
+      const detail = await api.duplicateWorkflow(id);
+      await this.loadList();
+      return detail.id;
+    },
     async remove(id: string): Promise<void> {
       await api.deleteWorkflow(id);
       await this.loadList();

@@ -6,9 +6,12 @@ import { httpNode } from './definition.js';
 
 // A tiny local echo server. The SSRF guard blocks 127.0.0.1 by default, so
 // tests that hit it run with the workflow opt-out turned on — except the
-// guard tests, which prove the refusal.
+// guard tests, which prove the refusal. A second server on another port
+// stands in for a different origin in the redirect tests.
 let server: Server;
+let otherServer: Server;
 let base: string;
+let otherBase: string;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -17,9 +20,22 @@ beforeAll(async () => {
       res.end();
       return;
     }
+    if (req.url === '/redirect-cross') {
+      res.writeHead(302, { location: `${otherBase}/final` });
+      res.end();
+      return;
+    }
     if (req.url === '/not-found') {
       res.writeHead(404, { 'content-type': 'text/plain' });
       res.end('nope');
+      return;
+    }
+    if (req.url === '/huge') {
+      res.on('error', () => {
+        // The client aborts mid-stream once it passes the size cap.
+      });
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end(Buffer.alloc(10 * 1024 * 1024 + 1, 120));
       return;
     }
     let body = '';
@@ -33,6 +49,8 @@ beforeAll(async () => {
           method: req.method,
           path: req.url,
           echoHeader: req.headers['x-test-header'] ?? null,
+          authHeader: req.headers['authorization'] ?? null,
+          cookieHeader: req.headers['cookie'] ?? null,
           contentType: req.headers['content-type'] ?? null,
           body,
         }),
@@ -44,11 +62,39 @@ beforeAll(async () => {
   });
   const { port } = server.address() as AddressInfo;
   base = `http://127.0.0.1:${port}`;
+
+  otherServer = createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          method: req.method,
+          path: req.url,
+          echoHeader: req.headers['x-test-header'] ?? null,
+          authHeader: req.headers['authorization'] ?? null,
+          cookieHeader: req.headers['cookie'] ?? null,
+          body,
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => {
+    otherServer.listen(0, '127.0.0.1', () => resolve());
+  });
+  const { port: otherPort } = otherServer.address() as AddressInfo;
+  otherBase = `http://127.0.0.1:${otherPort}`;
 });
 
 afterAll(async () => {
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
+  });
+  await new Promise<void>((resolve) => {
+    otherServer.close(() => resolve());
   });
 });
 
@@ -102,6 +148,65 @@ describe('http', () => {
     const out = await httpNode.execute(ctx({ method: 'GET', url: `${base}/redirect` }));
     const body = out.main[0].json.body as Record<string, unknown>;
     expect(body.path).toBe('/final');
+  });
+
+  it('strips Authorization and Cookie on a cross-origin redirect', async () => {
+    const out = await httpNode.execute(
+      ctx({
+        method: 'GET',
+        url: `${base}/redirect-cross`,
+        headers: [
+          { name: 'Authorization', value: 'Bearer secret' },
+          { name: 'Cookie', value: 'session=abc' },
+          { name: 'X-Test-Header', value: 'keep-me' },
+        ],
+      }),
+    );
+    const body = out.main[0].json.body as Record<string, unknown>;
+    expect(body.authHeader).toBeNull();
+    expect(body.cookieHeader).toBeNull();
+    expect(body.echoHeader).toBe('keep-me');
+  });
+
+  it('keeps Authorization on a same-origin redirect', async () => {
+    const out = await httpNode.execute(
+      ctx({
+        method: 'GET',
+        url: `${base}/redirect`,
+        headers: [{ name: 'Authorization', value: 'Bearer secret' }],
+      }),
+    );
+    const body = out.main[0].json.body as Record<string, unknown>;
+    expect(body.authHeader).toBe('Bearer secret');
+  });
+
+  it('fails past the 10 MB response cap', async () => {
+    await expect(
+      httpNode.execute(ctx({ method: 'GET', url: `${base}/huge` })),
+    ).rejects.toThrow('larger than the 10 MB cap');
+  });
+
+  it('rejects a bad timeout with a plain error', async () => {
+    await expect(
+      httpNode.execute(ctx({ method: 'GET', url: `${base}/final`, timeoutMs: 0 })),
+    ).rejects.toThrow('must be a positive number');
+    await expect(
+      httpNode.execute(ctx({ method: 'GET', url: `${base}/final`, timeoutMs: -5 })),
+    ).rejects.toThrow('must be a positive number');
+    await expect(
+      httpNode.execute(ctx({ method: 'GET', url: `${base}/final`, timeoutMs: Number.NaN })),
+    ).rejects.toThrow('must be a positive number');
+  });
+
+  it('reports a DNS failure as a DNS failure, not a timeout', async () => {
+    // A 300-character hostname fails DNS lookup locally (EINVAL) in any
+    // environment, without touching the network — the sandbox's resolver
+    // answers ordinary unresolvable names with a proxy address, so a
+    // plain ".invalid" name cannot be used here.
+    const longHost = `${'a'.repeat(300)}.invalid`;
+    await expect(
+      httpNode.execute(ctx({ method: 'GET', url: `https://${longHost}/x` }, false)),
+    ).rejects.toThrow('Could not resolve host');
   });
 
   it('fails the node on an HTTP error status', async () => {

@@ -15,6 +15,7 @@
           @keydown.enter="emit('add-node', node.type)"
           @keydown.space.prevent="emit('add-node', node.type)"
         >
+          <span v-if="node.icon" class="palette-item-icon" aria-hidden="true" v-html="node.icon"></span>
           <span class="palette-item-name">{{ node.displayName }}</span>
           <span class="palette-item-desc">{{ node.description }}</span>
         </div>

@@ -27,7 +27,9 @@
       <p>
         Press Run in the top right. Each node lights up as it finishes: amber
         while it works, green when it is done, red if it fails. Click a node
-        in the Run panel to see the data that passed through it.
+        in the Run panel to see the data that passed through it. While a run
+        is going, the Stop button ends it. To try out one node on its own,
+        select it and press Run just this node in its settings.
       </p>
     </section>
 
@@ -36,10 +38,20 @@
       <ul>
         <li><strong>Manual Trigger.</strong> Starts the run when you press Run.</li>
         <li><strong>Set.</strong> Adds or changes fields on the data.</li>
-        <li><strong>IF.</strong> Sends the data left or right based on a check.</li>
+        <li><strong>IF.</strong> Sends the data out its true output when the check holds, and out its false output when it doesn't. Each condition is a row: a value, a comparison, and something to compare it with. Several conditions combine with AND (all must hold) or OR (any must hold).</li>
         <li><strong>Code.</strong> Runs your own JavaScript on the data, safely boxed in.</li>
         <li><strong>HTTP Request.</strong> Calls a web address and returns what came back.</li>
       </ul>
+    </section>
+
+    <section class="help-section">
+      <h2>Active (coming later)</h2>
+      <p>
+        The Active switch on a workflow does nothing yet. Schedules and
+        automatic triggers arrive in a later version; for now, a workflow
+        only runs when you press Run. The switch is shown greyed out so
+        nobody mistakes it for something that works.
+      </p>
     </section>
 
     <section class="help-section">
@@ -53,15 +65,41 @@
           <code>{{ example.expr }}</code> {{ example.text }}
         </li>
       </ul>
+      <p>
+        Inside a Code node, the helpers are different: <code>$json</code> is
+        the first item's data, <code>$input.all()</code> is every item coming
+        in, and <code>$input.first()</code> is the first one.
+      </p>
     </section>
 
     <section class="help-section">
       <h2>Keys</h2>
       <ul>
         <li><strong>Ctrl+S</strong> saves the workflow.</li>
-        <li><strong>Delete</strong> removes the selected node.</li>
+        <li><strong>Delete</strong> removes the selected node (it asks first).</li>
         <li><strong>Esc</strong> closes a dialog without changing anything.</li>
       </ul>
+    </section>
+
+    <section class="help-section">
+      <h2>Updates</h2>
+      <p>
+        Soldar checks for a newer version when it starts. If one is out, it
+        asks before downloading anything, and the download is checked
+        against its published checksum before it is installed.
+      </p>
+      <p>
+        You are running Soldar {{ version }}.
+        <button
+          class="btn btn-secondary"
+          type="button"
+          :disabled="checking"
+          @click="checkNow"
+        >
+          {{ checking ? 'Checking...' : 'Check for updates' }}
+        </button>
+      </p>
+      <p v-if="checkResult" role="status">{{ checkResult }}</p>
     </section>
 
     <section class="help-section">
@@ -80,6 +118,27 @@
 </template>
 
 <script setup lang="ts">
+import { computed, ref } from 'vue';
+import { useUpdatesStore } from '../stores/updates.js';
+
+const updates = useUpdatesStore();
+const checking = ref(false);
+const checkResult = ref('');
+
+// The version comes from the update status (the server's own version);
+// before it loads, the page just says the version is unknown.
+const version = computed(() => updates.status?.current ?? 'unknown');
+
+async function checkNow(): Promise<void> {
+  checking.value = true;
+  checkResult.value = '';
+  try {
+    checkResult.value = await updates.checkNow();
+  } finally {
+    checking.value = false;
+  }
+}
+
 // The example expressions live here, not in the template: the template
 // parser would read the closing brackets inside them as the end of an
 // interpolation.

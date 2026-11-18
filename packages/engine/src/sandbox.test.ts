@@ -36,23 +36,59 @@ describe('runSandboxedCode', () => {
 
   it('reports a thrown error with its message', async () => {
     await expect(runSandboxedCode('throw new Error("boom");', items)).rejects.toThrow(
-      'Code node failed: boom',
+      'boom',
     );
   });
 
   it('has no require, process, or filesystem access', async () => {
     await expect(
       runSandboxedCode('return require("node:fs");', items),
-    ).rejects.toThrow('Code node failed');
+    ).rejects.toThrow('require is not defined');
     await expect(runSandboxedCode('return process.version;', items)).rejects.toThrow(
-      'Code node failed',
+      'process is not defined',
     );
   });
 
   it('kills a runaway loop at the timeout', async () => {
     await expect(
       runSandboxedCode('while (true) {}', items, { timeoutMs: 300 }),
-    ).rejects.toThrow('Code node failed');
+    ).rejects.toThrow('timed out');
+  });
+
+  it('kills a script that blows past the memory cap', async () => {
+    await expect(
+      runSandboxedCode(
+        'const a = []; while (true) a.push(new Array(100000).fill(0));',
+        items,
+        { memoryLimitMB: 8, timeoutMs: 10000 },
+      ),
+    ).rejects.toThrow('memory limit');
+  }, 15000);
+
+  it('provides $json as the first item\'s data', async () => {
+    const out = await runSandboxedCode(
+      'return [{ json: { doubled: $json.n * 2 } }];',
+      items,
+    );
+    expect(out).toEqual([{ json: { doubled: 2 } }]);
+  });
+
+  it('provides $input.all() and $input.first()', async () => {
+    const out = await runSandboxedCode(
+      'return $input.all().map((item) => ({ json: { n: item.json.n + 10 } }));',
+      items,
+    );
+    expect(out).toEqual([{ json: { n: 11 } }, { json: { n: 12 } }]);
+    const first = await runSandboxedCode('return [$input.first()];', items);
+    expect(first).toEqual([{ json: { n: 1 } }]);
+  });
+
+  it('$json is an empty object with no items', async () => {
+    const out = await runSandboxedCode(
+      'return [{ json: { keys: Object.keys($json).length } }];',
+      [],
+    );
+    expect(out).toEqual([{ json: { keys: 0 } }]);
   });
 
   it('can use plain JavaScript built-ins', async () => {

@@ -7,8 +7,11 @@
 //
 // Convention: the code is a function body. `return items.map(...)` returns
 // new items. Returning nothing passes the input items through unchanged.
+// n8n-style helpers are available: `$json` is the first item's data,
+// `$input.all()` returns every item, `$input.first()` the first one.
 
 import ivm from 'isolated-vm';
+import { entryToItem } from './items.js';
 import type { Item } from './types.js';
 
 export interface SandboxOptions {
@@ -21,18 +24,8 @@ export interface SandboxOptions {
 /** Turn whatever the script returned into a list of items. */
 function coerceToItems(value: unknown): Item[] {
   const toItem = (entry: unknown, index: number): Item => {
-    if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) {
-      const record = entry as Record<string, unknown>;
-      if (
-        record.json !== null &&
-        typeof record.json === 'object' &&
-        !Array.isArray(record.json)
-      ) {
-        return { json: record.json as Record<string, unknown> };
-      }
-      // A plain object is treated as the item's json.
-      return { json: record };
-    }
+    const item = entryToItem(entry);
+    if (item) return item;
     throw new Error(
       `Code returned something that is not an item at position ${index}. ` +
         'Return a list of items like [{ json: { ... } }] or plain objects like [{ name: "x" }].',
@@ -63,8 +56,12 @@ export async function runSandboxedCode(
 
     // The result is stringified inside the isolate so it crosses back as a
     // plain string; undefined means "no return", which passes items through.
+    // The helpers are script-level constants, so the user's function body
+    // closes over them.
     const script = await isolate.compileScript(
-      `const __result = (function () { ${code} })(); ` +
+      `const $json = items.length > 0 ? items[0].json : {}; ` +
+        `const $input = { all: () => items, first: () => items[0] }; ` +
+        `const __result = (function () { ${code} })(); ` +
         `__result === undefined ? null : JSON.stringify(__result)`,
     );
     const raw = await script.run(context, { timeout: timeoutMs });
@@ -72,9 +69,17 @@ export async function runSandboxedCode(
     const parsed: unknown = JSON.parse(raw as string);
     return coerceToItems(parsed);
   } catch (err) {
+    // No "Code node failed:" prefix here — the runner already names the
+    // node in its own message, and the prefix doubled the word "failed".
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Code node failed: ${message}`);
+    throw new Error(message);
   } finally {
-    isolate.dispose();
+    // The memory limit disposes the isolate itself; disposing again throws
+    // and would mask the real error.
+    try {
+      isolate.dispose();
+    } catch {
+      // Already disposed.
+    }
   }
 }

@@ -73,7 +73,19 @@ const trigger: NodeDefinition = {
   },
 };
 
-const ALL = [passThrough, tagger, failer, brancher, trigger];
+const coder: NodeDefinition = {
+  type: 'coder',
+  displayName: 'Coder',
+  description: 'Returns its code param untouched.',
+  inputs: 1,
+  outputs: ['main'],
+  parameters: [{ name: 'code', displayName: 'Code', type: 'code' }],
+  async execute(ctx) {
+    return { main: [{ json: { code: ctx.params.code } }] };
+  },
+};
+
+const ALL = [passThrough, tagger, failer, brancher, trigger, coder];
 
 function node(
   id: string,
@@ -143,6 +155,137 @@ describe('runWorkflow', () => {
     const byName = new Map(result.steps.map((s) => [s.nodeName, s]));
     expect(byName.get('Yes path')?.status).toBe('skipped');
     expect(byName.get('No path')?.status).toBe('success');
+  });
+
+  it('leaves code-type parameters untouched by expression evaluation', async () => {
+    const result = await runWorkflow(
+      wf(
+        [
+          node('t', 'trigger', 'Start'),
+          node('c', 'coder', 'Coder', { code: 'return {{ x }};' }),
+        ],
+        [{ from: 't', to: 'c' }],
+      ),
+      ALL,
+    );
+    expect(result.status).toBe('success');
+    expect(result.steps[1].output.main).toEqual([{ json: { code: 'return {{ x }};' } }]);
+  });
+
+  it('lets $node["Name"] see branch outputs, not just main', async () => {
+    const result = await runWorkflow(
+      wf(
+        [
+          node('t', 'trigger', 'Start'),
+          node('b', 'branch', 'Pick', { go: true }),
+          node(
+            'y',
+            'tag',
+            'Yes path',
+            { field: 'fromBranch', value: '{{ $node["Pick"].json.seed }}' },
+          ),
+        ],
+        [
+          { from: 't', to: 'b' },
+          { from: 'b', to: 'y', output: 'yes' },
+        ],
+      ),
+      ALL,
+      { triggerData: [{ json: { seed: true } }] },
+    );
+    expect(result.status).toBe('success');
+    expect(result.steps[2].output.main).toEqual([{ json: { seed: true, fromBranch: true } }]);
+  });
+
+  it('calls onExecutionStart with the execution id before any step runs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'soldar-runner-test-'));
+    const storage = createStorage(join(dir, 'run.db'));
+    try {
+      const order: string[] = [];
+      const result = await runWorkflow(
+        wf([node('t', 'trigger', 'Start'), node('b', 'pass', 'Pass')], [{ from: 't', to: 'b' }]),
+        ALL,
+        {
+          storage,
+          onExecutionStart: (id) => order.push(`start:${id}`),
+          onStep: (step) => order.push(`step:${step.nodeName}`),
+        },
+      );
+      expect(result.executionId).toMatch(/^exec_/);
+      expect(order).toEqual([`start:${result.executionId}`, 'step:Start', 'step:Pass']);
+    } finally {
+      storage.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops the run when the abort signal fires between nodes', async () => {
+    const controller = new AbortController();
+    const result = await runWorkflow(
+      wf(
+        [node('t', 'trigger', 'Start'), node('p', 'pass', 'Pass'), node('q', 'pass', 'Never')],
+        [
+          { from: 't', to: 'p' },
+          { from: 'p', to: 'q' },
+        ],
+      ),
+      ALL,
+      {
+        signal: controller.signal,
+        onStep: (step) => {
+          if (step.nodeName === 'Start') controller.abort();
+        },
+      },
+    );
+    expect(result.status).toBe('error');
+    expect(result.error).toBe('Run stopped.');
+    expect(result.steps.map((s) => s.nodeName)).toEqual(['Start']);
+  });
+
+  it('stops a run aborted before it starts', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runWorkflow(
+      wf([node('t', 'trigger', 'Start')], []),
+      ALL,
+      { signal: controller.signal },
+    );
+    expect(result.status).toBe('error');
+    expect(result.error).toBe('Run stopped.');
+    expect(result.steps).toEqual([]);
+  });
+
+  it('warns when wiring contradicts a node inputs declaration', async () => {
+    const warnings: string[] = [];
+    // A trigger with a wire feeding it, and a normal node with none.
+    await runWorkflow(
+      wf(
+        [
+          node('t', 'trigger', 'Start'),
+          node('t2', 'trigger', 'Second trigger'),
+          node('p', 'pass', 'Lonely'),
+        ],
+        [{ from: 't', to: 't2' }],
+      ),
+      ALL,
+      { warn: (msg) => warnings.push(msg) },
+    );
+    expect(warnings).toHaveLength(2);
+    const joined = warnings.join('\n');
+    expect(joined).toContain('"Second trigger"');
+    expect(joined).toContain('is a trigger');
+    expect(joined).toContain('"Lonely"');
+    expect(joined).toContain('nothing feeds into it');
+  });
+
+  it('does not warn when the wiring matches the declarations', async () => {
+    const warnings: string[] = [];
+    await runWorkflow(
+      wf([node('t', 'trigger', 'Start'), node('p', 'pass', 'Pass')], [{ from: 't', to: 'p' }]),
+      ALL,
+      { warn: (msg) => warnings.push(msg) },
+    );
+    expect(warnings).toEqual([]);
   });
 
   it('stops the run on a node error and records it on that step', async () => {

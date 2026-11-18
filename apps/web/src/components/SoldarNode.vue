@@ -8,6 +8,7 @@
     />
     <div class="soldar-node-body">
       <span class="soldar-node-light" :class="`light-${data.status}`" aria-hidden="true"></span>
+      <span v-if="data.icon" class="soldar-node-icon" aria-hidden="true" v-html="data.icon"></span>
       <span class="soldar-node-label">{{ data.label }}</span>
       <span class="soldar-node-type">{{ data.displayName }}</span>
     </div>

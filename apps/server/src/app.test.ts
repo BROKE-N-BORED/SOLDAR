@@ -61,6 +61,9 @@ describe('server API', () => {
     for (const node of list) {
       expect(node).not.toHaveProperty('execute');
       expect(Array.isArray(node.parameters)).toBe(true);
+      // Every node serves its icon as inline SVG for the palette/canvas.
+      expect(typeof node.icon).toBe('string');
+      expect(node.icon as string).toContain('<svg');
     }
   });
 
@@ -280,5 +283,373 @@ describe('server API', () => {
     );
     expect(codeStep).toBeDefined();
     expect((codeStep!.step as { status: string }).status).toBe('success');
+  });
+
+  it('rejects invalid trigger data with 400', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      payload: { name: 'Hello' },
+    });
+    const { id } = created.json() as { id: string };
+    await app.inject({
+      method: 'PUT',
+      url: `/api/workflows/${id}`,
+      payload: twoNodeWorkflow(id),
+    });
+
+    const notAnObject = await app.inject({
+      method: 'POST',
+      url: `/api/workflows/${id}/run`,
+      payload: { triggerData: 'nope' },
+    });
+    expect(notAnObject.statusCode).toBe(400);
+    expect(notAnObject.json().error).toContain('Trigger data entry 0 is not an object');
+
+    const badEntry = await app.inject({
+      method: 'POST',
+      url: `/api/workflows/${id}/run`,
+      payload: { triggerData: [{ json: { a: 1 } }, 42] },
+    });
+    expect(badEntry.statusCode).toBe(400);
+    expect(badEntry.json().error).toContain('Trigger data entry 1 is not an object');
+  });
+
+  it('rejects a save with an unknown node type', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      payload: { name: 'Bad' },
+    });
+    const { id } = created.json() as { id: string };
+    const workflow = twoNodeWorkflow(id);
+    workflow.nodes.push({
+      id: 'n3',
+      type: 'no-such-node',
+      name: 'Mystery',
+      position: [0, 0],
+      parameters: {},
+    });
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/workflows/${id}`,
+      payload: workflow,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain('no-such-node');
+  });
+
+  it('rejects a save based on a stale copy with 409', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      payload: { name: 'Hello' },
+    });
+    const { id } = created.json() as { id: string };
+    const saved = await app.inject({
+      method: 'PUT',
+      url: `/api/workflows/${id}`,
+      payload: twoNodeWorkflow(id),
+    });
+    expect(saved.statusCode).toBe(200);
+    const { updatedAt } = saved.json() as { updatedAt: number };
+
+    const stale = await app.inject({
+      method: 'PUT',
+      url: `/api/workflows/${id}`,
+      payload: { ...twoNodeWorkflow(id), expectedUpdatedAt: 1 },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error).toContain('changed in another tab');
+
+    const fresh = await app.inject({
+      method: 'PUT',
+      url: `/api/workflows/${id}`,
+      payload: { ...twoNodeWorkflow(id), expectedUpdatedAt: updatedAt },
+    });
+    expect(fresh.statusCode).toBe(200);
+  });
+
+  it('deletes one run and 404s for an unknown one', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      payload: { name: 'Hello' },
+    });
+    const { id } = created.json() as { id: string };
+    await app.inject({
+      method: 'PUT',
+      url: `/api/workflows/${id}`,
+      payload: twoNodeWorkflow(id),
+    });
+    const run = await app.inject({ method: 'POST', url: `/api/workflows/${id}/run` });
+    const { executionId } = run.json() as { executionId: string };
+
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: `/api/executions/${executionId}`,
+    });
+    expect(deleted.statusCode).toBe(204);
+    const gone = await app.inject({ method: 'GET', url: `/api/executions/${executionId}` });
+    expect(gone.statusCode).toBe(404);
+    const unknown = await app.inject({ method: 'DELETE', url: '/api/executions/exec_nope' });
+    expect(unknown.statusCode).toBe(404);
+  });
+
+  it('lists executions with an offset', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      payload: { name: 'Hello' },
+    });
+    const { id } = created.json() as { id: string };
+    await app.inject({
+      method: 'PUT',
+      url: `/api/workflows/${id}`,
+      payload: twoNodeWorkflow(id),
+    });
+    const first = await app.inject({ method: 'POST', url: `/api/workflows/${id}/run` });
+    const firstId = (first.json() as { executionId: string }).executionId;
+    await app.inject({ method: 'POST', url: `/api/workflows/${id}/run` });
+
+    const page = await app.inject({
+      method: 'GET',
+      url: `/api/executions?workflowId=${id}&limit=1&offset=1`,
+    });
+    const rows = page.json() as { id: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(firstId);
+  });
+
+  it('cancels a run in flight', { timeout: 30000 }, async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      payload: { name: 'Slow' },
+    });
+    const { id } = created.json() as { id: string };
+    const workflow: Workflow = {
+      id,
+      name: 'Slow',
+      active: false,
+      nodes: [
+        { id: 'n1', type: 'manual-trigger', name: 'Start', position: [100, 100], parameters: {} },
+        {
+          id: 'n2',
+          type: 'code',
+          name: 'Slow step',
+          position: [320, 100],
+          parameters: { code: SLOW_CODE },
+        },
+      ],
+      connections: [{ from: 'n1', to: 'n2' }],
+    };
+    await app.inject({ method: 'PUT', url: `/api/workflows/${id}`, payload: workflow });
+    const run = await app.inject({ method: 'POST', url: `/api/workflows/${id}/run` });
+    const { executionId } = run.json() as { executionId: string };
+
+    const cancel = await app.inject({
+      method: 'POST',
+      url: `/api/executions/${executionId}/cancel`,
+    });
+    expect(cancel.statusCode).toBe(200);
+    expect(cancel.json()).toEqual({ cancelled: true });
+
+    // The slow node finishes its current call first, then the run stops.
+    let execution: { status: string; error: string | null } | null = null;
+    for (let i = 0; i < 200; i++) {
+      const res = await app.inject({ method: 'GET', url: `/api/executions/${executionId}` });
+      execution = (res.json() as { execution: { status: string; error: string | null } }).execution;
+      if (execution!.status !== 'running') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(execution!.status).toBe('error');
+    expect(execution!.error).toBe('Run stopped.');
+
+    // A finished run cannot be cancelled again.
+    const again = await app.inject({
+      method: 'POST',
+      url: `/api/executions/${executionId}/cancel`,
+    });
+    expect(again.statusCode).toBe(409);
+    const unknown = await app.inject({
+      method: 'POST',
+      url: '/api/executions/exec_nope/cancel',
+    });
+    expect(unknown.statusCode).toBe(404);
+  });
+
+  it('refuses a third concurrent run with 429', { timeout: 30000 }, async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      payload: { name: 'Slow' },
+    });
+    const { id } = created.json() as { id: string };
+    const workflow: Workflow = {
+      id,
+      name: 'Slow',
+      active: false,
+      nodes: [
+        { id: 'n1', type: 'manual-trigger', name: 'Start', position: [100, 100], parameters: {} },
+        {
+          id: 'n2',
+          type: 'code',
+          name: 'Slow step',
+          position: [320, 100],
+          parameters: { code: SLOW_CODE },
+        },
+      ],
+      connections: [{ from: 'n1', to: 'n2' }],
+    };
+    await app.inject({ method: 'PUT', url: `/api/workflows/${id}`, payload: workflow });
+    const first = await app.inject({ method: 'POST', url: `/api/workflows/${id}/run` });
+    const second = await app.inject({ method: 'POST', url: `/api/workflows/${id}/run` });
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(202);
+    const third = await app.inject({ method: 'POST', url: `/api/workflows/${id}/run` });
+    expect(third.statusCode).toBe(429);
+    expect(third.json().error).toContain('Two runs are already going');
+
+    // Clean up: cancel both runs and wait for them to land.
+    const ids = [
+      (first.json() as { executionId: string }).executionId,
+      (second.json() as { executionId: string }).executionId,
+    ];
+    for (const executionId of ids) {
+      await app.inject({ method: 'POST', url: `/api/executions/${executionId}/cancel` });
+    }
+    for (const executionId of ids) {
+      for (let i = 0; i < 200; i++) {
+        const res = await app.inject({ method: 'GET', url: `/api/executions/${executionId}` });
+        const execution = (res.json() as { execution: { status: string } }).execution;
+        if (execution.status !== 'running') break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+  });
+
+  it('duplicates a workflow with a new id and a copy name', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      payload: { name: 'Hello' },
+    });
+    const { id } = created.json() as { id: string };
+    await app.inject({
+      method: 'PUT',
+      url: `/api/workflows/${id}`,
+      payload: twoNodeWorkflow(id),
+    });
+
+    const copy = await app.inject({
+      method: 'POST',
+      url: `/api/workflows/${id}/duplicate`,
+    });
+    expect(copy.statusCode).toBe(201);
+    const copyBody = copy.json() as {
+      id: string;
+      name: string;
+      active: boolean;
+      workflow: Workflow;
+    };
+    expect(copyBody.id).not.toBe(id);
+    expect(copyBody.name).toBe('Copy of Hello');
+    expect(copyBody.active).toBe(false);
+    expect(copyBody.workflow.nodes).toHaveLength(2);
+    expect(copyBody.workflow.connections).toHaveLength(1);
+
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/workflows/${id}/duplicate`,
+    });
+    expect((second.json() as { name: string }).name).toBe('Copy of Hello 2');
+
+    const unknown = await app.inject({
+      method: 'POST',
+      url: '/api/workflows/wf_nope/duplicate',
+    });
+    expect(unknown.statusCode).toBe(404);
+  });
+
+  it('runs just one node', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/workflows',
+      payload: { name: 'Hello' },
+    });
+    const { id } = created.json() as { id: string };
+    await app.inject({
+      method: 'PUT',
+      url: `/api/workflows/${id}`,
+      payload: twoNodeWorkflow(id),
+    });
+
+    const run = await app.inject({
+      method: 'POST',
+      url: `/api/workflows/${id}/run-node`,
+      payload: { nodeId: 'n2' },
+    });
+    expect(run.statusCode).toBe(202);
+    const { executionId } = run.json() as { executionId: string };
+
+    let detail: {
+      execution: { status: string; workflowId: string };
+      steps: Array<{ nodeName: string }>;
+    } | null = null;
+    for (let i = 0; i < 100; i++) {
+      const res = await app.inject({ method: 'GET', url: `/api/executions/${executionId}` });
+      detail = res.json();
+      if (detail!.execution.status !== 'running') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(detail!.execution.status).toBe('success');
+    expect(detail!.execution.workflowId).toBe(id);
+    expect(detail!.steps).toHaveLength(1);
+    expect(detail!.steps[0].nodeName).toBe('Greet');
+
+    const missing = await app.inject({
+      method: 'POST',
+      url: `/api/workflows/${id}/run-node`,
+      payload: {},
+    });
+    expect(missing.statusCode).toBe(400);
+    const unknownNode = await app.inject({
+      method: 'POST',
+      url: `/api/workflows/${id}/run-node`,
+      payload: { nodeId: 'n99' },
+    });
+    expect(unknownNode.statusCode).toBe(404);
+  });
+
+  it('answers 503 for shutdown when no shutdown handler is wired', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/shutdown' });
+    expect(res.statusCode).toBe(503);
+  });
+
+  it('answers a WebSocket subscribe to an unknown run with an error', { timeout: 30000 }, async () => {
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const address = app.server.address();
+    const port = typeof address === 'object' && address !== null ? address.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const message = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Timed out waiting for the error.')), 10000);
+      ws.addEventListener('open', () => {
+        ws.send(JSON.stringify({ type: 'subscribe', executionId: 'exec_nope' }));
+      });
+      ws.addEventListener('message', (event) => {
+        clearTimeout(timer);
+        resolve(JSON.parse(event.data as string) as Record<string, unknown>);
+      });
+      ws.addEventListener('error', () => {
+        clearTimeout(timer);
+        reject(new Error('WebSocket error.'));
+      });
+    });
+    ws.close();
+    expect(message.type).toBe('error');
+    expect(message.message).toBe('Unknown execution.');
   });
 });

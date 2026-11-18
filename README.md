@@ -22,11 +22,26 @@ Nodes: Manual Trigger, Set, IF, Code, HTTP Request.
 The installer gets everything Soldar needs (Node 24 and pnpm if they are
 not already there), builds the app, and puts the Soldar icon on the
 desktop and in the applications menu. It starts Soldar once at the end to
-check the install works.
+check the install works. Soldar itself lives in `~/.local/soldar/app`,
+so the folder you extracted the ZIP into can be deleted once the install
+finishes.
 
 If double-clicking an icon opens a text editor instead of starting
 anything, right-click the icon, choose Allow Launching, and double-click
 it again.
+
+To remove Soldar, run `uninstall.sh` from the Soldar folder. It stops
+the server, removes the icons and the app, and asks whether your
+workflows and runs should go too (they are kept unless you say yes).
+
+## Updates
+
+Soldar checks GitHub for a newer version when it starts. If one is out,
+a popup says so and asks; nothing is downloaded until you say yes, and
+the download is checked against the release's published checksum before
+it is installed. After the download, Soldar asks about restarting: yes
+restarts it with the update applied, no waits and the update finishes
+the next time Soldar starts. You can also check by hand from How to use.
 
 ## Where your stuff lives
 

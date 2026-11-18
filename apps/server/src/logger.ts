@@ -4,6 +4,7 @@
 // guarded. The log is available in the app via GET /api/debug-log.
 
 import { appendFileSync, existsSync, renameSync, statSync } from 'node:fs';
+import { scrubSecrets } from '@soldar/engine';
 
 const MAX_BYTES = 1024 * 1024;
 
@@ -15,7 +16,9 @@ export interface Logger {
 
 export function createLogger(filePath: string): Logger {
   const write = (level: string, message: string): void => {
-    const line = `${new Date().toISOString()} [${level}] ${message}\n`;
+    // Every line is scrubbed on the way in, so a secret that slips into
+    // a message never lands in the debug log on disk.
+    const line = `${new Date().toISOString()} [${level}] ${scrubSecrets(message)}\n`;
     try {
       if (existsSync(filePath) && statSync(filePath).size > MAX_BYTES) {
         renameSync(filePath, `${filePath}.1`);

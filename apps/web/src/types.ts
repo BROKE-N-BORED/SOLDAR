@@ -33,6 +33,8 @@ export interface SoldarNodeData extends Record<string, unknown> {
   inputs: number;
   outputs: string[];
   status: NodeStatus;
+  /** The node's icon, as inline SVG markup. */
+  icon?: string;
 }
 
 export function emptyRunState(): RunState {

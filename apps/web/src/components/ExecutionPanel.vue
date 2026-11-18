@@ -5,8 +5,18 @@
       <span class="run-panel-status" :class="`run-${run.status}`">
         {{ statusText }}
       </span>
+      <button
+        class="btn btn-icon"
+        type="button"
+        :title="collapsed ? 'Expand run panel' : 'Collapse run panel'"
+        :aria-label="collapsed ? 'Expand run panel' : 'Collapse run panel'"
+        @click="collapsed = !collapsed"
+      >
+        {{ collapsed ? '+' : '-' }}
+      </button>
     </div>
 
+    <template v-if="!collapsed">
     <p v-if="run.status === 'idle'" class="run-panel-empty">
       Press Run to run this workflow. Each node lights up as it finishes, and
       you can click a node here to see the data that passed through it.
@@ -42,12 +52,14 @@
         </li>
       </ul>
     </template>
+    </template>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import type { RunState, StepData } from '../types.js';
+import { useTickingNow } from '../useNow.js';
 
 const props = defineProps<{
   run: RunState;
@@ -58,6 +70,12 @@ const emit = defineEmits<{
 }>();
 
 const expandedNodeId = ref<string | null>(null);
+const collapsed = ref(false);
+
+// The clock ticks only while the run is going, so the duration moves
+// instead of freezing at the moment the run started.
+const isRunning = computed(() => props.run.status === 'running');
+const now = useTickingNow(isRunning);
 
 const statusText = computed(() => {
   switch (props.run.status) {
@@ -76,7 +94,7 @@ const statusText = computed(() => {
 
 const durationText = computed(() => {
   if (props.run.startedAt === null) return '';
-  const end = props.run.finishedAt ?? Date.now();
+  const end = props.run.finishedAt ?? now.value;
   const ms = end - props.run.startedAt;
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(2)} s`;

@@ -9,8 +9,10 @@
 import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   createStorage,
+  entryToItem,
   runWorkflow,
   WorkflowValidationError,
   type Item,
@@ -50,7 +52,7 @@ function fail(message: string, code = 1): never {
   throw new Error('__cli_exit__');
 }
 
-function parseTriggerData(raw: string): Item[] {
+export function parseTriggerData(raw: string): Item[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -58,24 +60,15 @@ function parseTriggerData(raw: string): Item[] {
     fail(`--trigger-data is not valid JSON.`);
   }
   const toItem = (entry: unknown, index: number): Item => {
-    if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) {
-      const record = entry as Record<string, unknown>;
-      if (
-        record.json !== null &&
-        typeof record.json === 'object' &&
-        !Array.isArray(record.json)
-      ) {
-        return { json: record.json as Record<string, unknown> };
-      }
-      return { json: record };
-    }
+    const item = entryToItem(entry);
+    if (item) return item;
     fail(`--trigger-data entry ${index} is not an object.`);
   };
   if (Array.isArray(parsed)) return parsed.map(toItem);
   return [toItem(parsed, 0)];
 }
 
-function parseArgs(argv: string[]): RunArgs {
+export function parseArgs(argv: string[]): RunArgs {
   if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
     console.log(USAGE);
     process.exitCode = 0;
@@ -102,11 +95,13 @@ function parseArgs(argv: string[]): RunArgs {
       args.json = true;
     } else if (arg === '--db') {
       const value = argv[++i];
-      if (!value) fail('--db needs a path.');
+      // A following flag is not a path: `--db --json` used to swallow
+      // --json as the database path.
+      if (!value || value.startsWith('--')) fail('--db needs a path.', 2);
       args.dbPath = value;
     } else if (arg === '--trigger-data') {
       const value = argv[++i];
-      if (!value) fail('--trigger-data needs a JSON value.');
+      if (!value || value.startsWith('--')) fail('--trigger-data needs a JSON value.', 2);
       args.triggerData = parseTriggerData(value);
     } else {
       fail(`Unknown option "${arg}". See --help.`, 2);
@@ -154,7 +149,7 @@ function printSummary(result: RunResult, dbPath: string): void {
   console.log(`Database: ${dbPath}`);
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   let args: RunArgs;
   try {
     args = parseArgs(process.argv.slice(2));
@@ -207,8 +202,15 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  if (err instanceof Error && err.message === '__cli_exit__') return;
-  console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
-});
+// Only run when this file is the entry point, not when imported (the
+// tests import main() and call it with a faked process.argv).
+const isEntryPoint =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+if (isEntryPoint) {
+  main().catch((err: unknown) => {
+    if (err instanceof Error && err.message === '__cli_exit__') return;
+    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  });
+}

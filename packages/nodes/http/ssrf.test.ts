@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { assertUrlAllowed, isPrivateIp } from './ssrf.js';
+import {
+  assertUrlAllowed,
+  createPinnedLookup,
+  isPrivateIp,
+  resolveCheckedAddresses,
+} from './ssrf.js';
 
 describe('isPrivateIp', () => {
   const cases: [string, boolean][] = [
@@ -17,6 +22,8 @@ describe('isPrivateIp', () => {
     ['100.127.255.255', true],
     ['192.0.2.1', true],
     ['198.51.100.1', true],
+    ['198.18.0.1', true],
+    ['198.19.255.255', true],
     ['203.0.113.1', true],
     ['224.0.0.1', true],
     ['255.255.255.255', true],
@@ -24,6 +31,7 @@ describe('isPrivateIp', () => {
     ['8.8.8.8', false],
     ['1.1.1.1', false],
     ['172.32.0.1', false],
+    ['198.20.0.1', false],
     ['100.128.0.1', false],
     ['11.0.0.1', false],
     // IPv6 — private and special ranges
@@ -113,5 +121,58 @@ describe('assertUrlAllowed', () => {
         },
       }),
     ).rejects.toThrow('Could not resolve host "no-such-host.invalid"');
+  });
+});
+
+describe('resolveCheckedAddresses', () => {
+  it('returns the checked addresses for a public hostname', async () => {
+    const addresses = await resolveCheckedAddresses('https://example.com/api', {
+      resolveHost: async () => ['93.184.216.34', '2606:2800:220:1:248:1893:25c8:1946'],
+    });
+    expect(addresses).toEqual(['93.184.216.34', '2606:2800:220:1:248:1893:25c8:1946']);
+  });
+
+  it('returns the literal for a public IP hostname', async () => {
+    await expect(resolveCheckedAddresses('http://8.8.8.8/')).resolves.toEqual(['8.8.8.8']);
+  });
+
+  it('returns [] when the workflow opted out', async () => {
+    await expect(
+      resolveCheckedAddresses('http://192.168.1.1/', { allowPrivate: true }),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe('createPinnedLookup', () => {
+  it('answers with the pinned address, never real DNS', async () => {
+    const lookup = createPinnedLookup(['93.184.216.34']);
+    // A hostname that does not exist in DNS at all still resolves to the
+    // pinned address — the lookup never consults the resolver.
+    const address = await new Promise<string>((resolve, reject) => {
+      lookup('does-not-exist.invalid', {}, (err, addr) => {
+        if (err) reject(err);
+        else resolve(addr as string);
+      });
+    });
+    expect(address).toBe('93.184.216.34');
+  });
+
+  it('answers all-addresses lookups with the full pinned list', async () => {
+    const lookup = createPinnedLookup([
+      '93.184.216.34',
+      '2606:2800:220:1:248:1893:25c8:1946',
+    ]);
+    const addresses = await new Promise<{ address: string; family: number }[]>(
+      (resolve, reject) => {
+        lookup('example.com', { all: true }, (err, addr) => {
+          if (err) reject(err);
+          else resolve(addr as { address: string; family: number }[]);
+        });
+      },
+    );
+    expect(addresses).toEqual([
+      { address: '93.184.216.34', family: 4 },
+      { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 },
+    ]);
   });
 });

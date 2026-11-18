@@ -24,5 +24,17 @@ export default defineConfig({
       'packages/nodes/**/*.test.ts',
       'apps/server/src/**/*.test.ts',
     ],
+    // One worker per test file reloads the native modules
+    // (better-sqlite3, isolated-vm) and the whole engine for every file:
+    // most of the suite's wall time was that loading, not the tests
+    // (collect 177 s vs tests 89 s summed across workers). Sharing
+    // workers across files loads them once. Safe here: no test mutates
+    // module-level state — each test builds its own storage in a temp
+    // dir, and no test mocks modules.
+    poolOptions: {
+      threads: {
+        isolate: false,
+      },
+    },
   },
 });

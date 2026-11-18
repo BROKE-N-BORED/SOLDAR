@@ -90,6 +90,11 @@ export interface NodeDefinition {
   outputs: string[];
   parameters: ParameterSchema[];
   /**
+   * The node's icon, as inline SVG markup (stroke-based, currentColor).
+   * The API serves it to the palette and the canvas nodes.
+   */
+  icon?: string;
+  /**
    * 'perItem' (default): execute runs once per input item, with params
    * evaluated against that item. 'allItems': execute runs once with every
    * input item (the Code node — it needs the whole list at once).

@@ -33,6 +33,13 @@ describe('evaluateExpression', () => {
     expect(evaluateExpression('$node["Greet"].items.length', s)).toBe(1);
   });
 
+  it('refuses expressions nested deeper than the limit', () => {
+    const deep = '('.repeat(101) + '1' + ')'.repeat(101);
+    expect(() => evaluateExpression(deep, scope({}))).toThrow('nested too deeply');
+    const ok = '('.repeat(50) + '1' + ')'.repeat(50);
+    expect(evaluateExpression(ok, scope({}))).toBe(1);
+  });
+
   it('errors on an unknown node name', () => {
     expect(() => evaluateExpression('$node["Nope"].json', scope({}))).toThrow(
       'Unknown node "Nope"',
@@ -147,5 +154,14 @@ describe('evaluateParameters', () => {
       nested: { two: 'got 2' },
       list: [1, 5],
     });
+  });
+
+  it('copies skipped parameters through untouched', () => {
+    const params = evaluateParameters(
+      { code: 'return {{ x }};', label: '{{ $json.a }}' },
+      scope({ a: 1 }),
+      new Set(['code']),
+    );
+    expect(params).toEqual({ code: 'return {{ x }};', label: 1 });
   });
 });

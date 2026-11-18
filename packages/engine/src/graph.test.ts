@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { topologicalSort, validateWorkflow, WorkflowValidationError } from './graph.js';
-import type { Workflow } from './types.js';
+import type { NodeDefinition, Workflow } from './types.js';
 
 function node(id: string, name = id, type = 'set'): Workflow['nodes'][number] {
   return { id, type, name, position: [0, 0], parameters: {} };
@@ -70,6 +70,100 @@ describe('validateWorkflow', () => {
         ),
       ),
     ).toThrow('Cycle detected: b -> c -> b');
+  });
+
+  it('rejects a workflow with no id or no name', () => {
+    const noId = workflow([node('a', 'A')], []);
+    (noId as { id: string }).id = '';
+    expect(() => validateWorkflow(noId)).toThrow('needs an id');
+    const noName = workflow([node('a', 'A')], []);
+    (noName as { name: string }).name = '';
+    expect(() => validateWorkflow(noName)).toThrow('needs a name');
+  });
+
+  it('rejects a node with a broken position, but allows a missing one', () => {
+    const bad = node('a', 'A');
+    (bad as unknown as { position: unknown }).position = [100, 'x'];
+    expect(() => validateWorkflow(workflow([bad], []))).toThrow('broken position');
+    const missing = node('a', 'A');
+    delete (missing as unknown as { position?: unknown }).position;
+    expect(() => validateWorkflow(workflow([missing], []))).not.toThrow();
+  });
+
+  it('rejects duplicate connections', () => {
+    expect(() =>
+      validateWorkflow(
+        workflow([node('a', 'A'), node('b', 'B')], [
+          { from: 'a', to: 'b' },
+          { from: 'a', to: 'b' },
+        ]),
+      ),
+    ).toThrow('Two identical wires');
+  });
+
+  it('rejects a chain deeper than the cycle-check limit', () => {
+    const nodes = Array.from({ length: 1002 }, (_, i) => node(`n${i}`, `N${i}`));
+    const connections = nodes
+      .slice(0, -1)
+      .map((n, i) => ({ from: n.id, to: nodes[i + 1].id }));
+    expect(() => validateWorkflow(workflow(nodes, connections))).toThrow(
+      'deeper than 1000',
+    );
+  });
+});
+
+describe('validateWorkflow with definitions', () => {
+  const defs: NodeDefinition[] = [
+    {
+      type: 'set',
+      displayName: 'Set',
+      description: '',
+      inputs: 1,
+      outputs: ['main'],
+      parameters: [],
+      execute: async () => ({}),
+    },
+    {
+      type: 'if',
+      displayName: 'IF',
+      description: '',
+      inputs: 1,
+      outputs: ['true', 'false'],
+      parameters: [],
+      execute: async () => ({}),
+    },
+  ];
+
+  it('rejects an unknown node type', () => {
+    expect(() =>
+      validateWorkflow(workflow([node('a', 'A', 'nope')], []), defs),
+    ).toThrow('unknown node type "nope"');
+  });
+
+  it('rejects a wire using an output the source node does not declare', () => {
+    expect(() =>
+      validateWorkflow(
+        workflow([node('a', 'A', 'if'), node('b', 'B', 'set')], [
+          { from: 'a', to: 'b', output: 'main' },
+        ]),
+        defs,
+      ),
+    ).toThrow('only has "true", "false"');
+  });
+
+  it('accepts wires using declared branch outputs', () => {
+    expect(() =>
+      validateWorkflow(
+        workflow(
+          [node('a', 'A', 'if'), node('b', 'B', 'set'), node('c', 'C', 'set')],
+          [
+            { from: 'a', to: 'b', output: 'true' },
+            { from: 'a', to: 'c', output: 'false' },
+          ],
+        ),
+        defs,
+      ),
+    ).not.toThrow();
   });
 });
 

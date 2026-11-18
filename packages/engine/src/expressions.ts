@@ -15,7 +15,8 @@ export class ExpressionError extends Error {
   }
 }
 
-/** What an expression can see. `nodeOutputs` maps node name -> main-output items. */
+/** What an expression can see. `nodeOutputs` maps node name -> items from
+ *  all of that node's outputs (an IF node contributes both branches). */
 export interface ExpressionScope {
   item: Item;
   nodeOutputs: Map<string, Item[]>;
@@ -219,8 +220,17 @@ const PRECEDENCE: Record<string, number> = {
   '%': 6,
 };
 
+/** Deepest nesting an expression may have. Past this, a few thousand
+ *  brackets would overflow the stack with a confusing error instead of a
+ *  plain one. */
+const MAX_EXPRESSION_DEPTH = 100;
+
 class Parser {
   private pos = 0;
+  /** How deep the parser has recursed. Every nested construct (parens,
+   *  brackets, ternaries, calls) descends through parseTernary, so one
+   *  counter there caps them all before the stack overflows. */
+  private depth = 0;
 
   constructor(private readonly tokens: Token[]) {}
 
@@ -254,13 +264,23 @@ class Parser {
   }
 
   private parseTernary(): AstNode {
-    const cond = this.parseBinary(1);
-    if (this.peek().type !== 'question') return cond;
-    this.next();
-    const then = this.parseTernary();
-    this.expect('colon', "':' in a ternary expression");
-    const otherwise = this.parseTernary();
-    return { kind: 'ternary', cond, then, otherwise };
+    if (++this.depth > MAX_EXPRESSION_DEPTH) {
+      throw new ExpressionError(
+        `Expression is nested too deeply (more than ${MAX_EXPRESSION_DEPTH} levels). ` +
+          `Break it into smaller pieces.`,
+      );
+    }
+    try {
+      const cond = this.parseBinary(1);
+      if (this.peek().type !== 'question') return cond;
+      this.next();
+      const then = this.parseTernary();
+      this.expect('colon', "':' in a ternary expression");
+      const otherwise = this.parseTernary();
+      return { kind: 'ternary', cond, then, otherwise };
+    } finally {
+      this.depth--;
+    }
   }
 
   private parseBinary(minPrecedence: number): AstNode {
@@ -636,10 +656,15 @@ export function evaluateTemplate(template: string, scope: ExpressionScope): unkn
   );
 }
 
-/** Walk a parameters object and evaluate every {{ }} string in it. */
+/**
+ * Walk a parameters object and evaluate every {{ }} string in it.
+ * Parameters named in `skipKeys` (code-type settings, where a {{ is
+ * literal code, not a template) are copied through untouched.
+ */
 export function evaluateParameters(
   params: Record<string, unknown>,
   scope: ExpressionScope,
+  skipKeys: ReadonlySet<string> = new Set(),
 ): Record<string, unknown> {
   const walk = (value: unknown): unknown => {
     if (typeof value === 'string') return evaluateTemplate(value, scope);
@@ -651,5 +676,9 @@ export function evaluateParameters(
     }
     return value;
   };
-  return walk(params) as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    out[key] = skipKeys.has(key) ? value : walk(value);
+  }
+  return out;
 }

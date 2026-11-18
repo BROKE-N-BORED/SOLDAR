@@ -24,6 +24,9 @@ export default defineConfig({
       SOLDAR_DATA_DIR: e2eDataDir,
       SOLDAR_PORT: '5678',
       SOLDAR_HOST: '127.0.0.1',
+      // The e2e server must not phone GitHub on startup; the update
+      // dialog is tested with stubbed API answers instead.
+      SOLDAR_NO_UPDATE_CHECK: '1',
     },
     url: 'http://127.0.0.1:5678/api/health',
     reuseExistingServer: !process.env.CI,

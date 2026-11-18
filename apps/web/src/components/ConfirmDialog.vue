@@ -12,6 +12,14 @@
         >
           {{ cancelLabel }}
         </button>
+        <button
+          v-if="extraLabel"
+          class="btn btn-secondary"
+          type="button"
+          @click="emit('extra')"
+        >
+          {{ extraLabel }}
+        </button>
         <button class="btn btn-danger" type="button" @click="emit('confirm')">
           {{ confirmLabel }}
         </button>
@@ -29,6 +37,8 @@ withDefaults(
     message: string;
     confirmLabel: string;
     cancelLabel?: string;
+    /** An optional middle action (e.g. "Save and leave"). */
+    extraLabel?: string;
   }>(),
   { cancelLabel: 'Keep it' },
 );
@@ -36,6 +46,7 @@ withDefaults(
 const emit = defineEmits<{
   (event: 'confirm'): void;
   (event: 'cancel'): void;
+  (event: 'extra'): void;
 }>();
 
 // Destructive confirmations default to No: focus starts on the safe button.

@@ -57,4 +57,20 @@ describe('set', () => {
     );
     expect(out).toEqual({ main: [{ json: { ok: 2 } }] });
   });
+
+  it('keeps a field named __proto__ instead of dropping it', async () => {
+    const out = await setNode.execute(
+      ctx([{ json: { a: 1 } }], {
+        values: [{ name: '__proto__', value: { polluted: true } }],
+      }),
+    );
+    const json = out.main[0].json as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(json, '__proto__')).toBe(true);
+    expect(json['__proto__']).toEqual({ polluted: true });
+    const roundTripped = JSON.parse(JSON.stringify(json)) as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(roundTripped, '__proto__')).toBe(true);
+    expect(roundTripped['__proto__']).toEqual({ polluted: true });
+    // And it must not pollute the global prototype.
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
 });
