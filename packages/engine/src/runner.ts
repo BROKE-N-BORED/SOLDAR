@@ -221,9 +221,10 @@ export async function runWorkflow(
       });
 
       const baseContext: Omit<NodeContext, 'input' | 'params'> = {
+        rawParams: node.parameters,
         credentials: async () => {
           throw new Error(
-            'Credentials are not available in Phase 1 — the credentials store arrives in Phase 4.',
+            'Credentials are not available in Phase 1. The credentials store arrives in Phase 4.',
           );
         },
         log: (msg: string) => log(`[${node.name}] ${msg}`),

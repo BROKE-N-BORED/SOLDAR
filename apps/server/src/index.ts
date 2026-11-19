@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
     const warning =
       `Soldar is listening on ${host}, which other computers on the network ` +
-      `can reach — and Soldar has no login yet, so anyone who can reach it ` +
+      `can reach, and Soldar has no login yet, so anyone who can reach it ` +
       `can read and run every workflow. Keep SOLDAR_HOST at 127.0.0.1 unless ` +
       `you mean to share it.`;
     logger.warn(warning);

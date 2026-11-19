@@ -2,7 +2,7 @@
 // no UI code: graph validation, run order, expression evaluation, the
 // runner, SQLite storage, and the Code node sandbox.
 
-export const ENGINE_VERSION = '0.3.0';
+export const ENGINE_VERSION = '0.3.1';
 
 export * from './types.js';
 export * from './items.js';

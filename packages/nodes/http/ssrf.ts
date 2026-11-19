@@ -175,7 +175,7 @@ async function defaultResolve(host: string): Promise<string[]> {
 
 function refused(host: string, address: string): Error {
   return new Error(
-    `Refused to call ${host} — it resolves to private address ${address}, and the ` +
+    `Refused to call ${host}. It resolves to private address ${address}, and the ` +
       `SSRF guard blocks local network addresses. Set settings.allowPrivateAddresses ` +
       `to true on the workflow to allow it.`,
   );

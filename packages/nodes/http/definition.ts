@@ -28,6 +28,46 @@ function truncate(text: string, max: number): string {
 }
 
 /**
+ * Turn a raw socket failure into plain words for the run panel. Node's
+ * messages carry codes like ECONNREFUSED, which mean nothing to someone
+ * who does not write code, so the common failures get a sentence that
+ * says what happened, keeps the address it happened to, and says what
+ * to check. Anything unrecognized keeps the original message.
+ */
+export function plainFailureMessage(err: unknown, rawUrl: string): string {
+  const target = stripUrlQuery(rawUrl);
+  let host = target;
+  let hostPort = target;
+  try {
+    const parsed = new URL(rawUrl);
+    host = parsed.hostname;
+    hostPort = parsed.port === '' ? parsed.hostname : `${parsed.hostname}:${parsed.port}`;
+  } catch {
+    // Not a parseable URL; the raw target is the best address we have.
+  }
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  switch (code) {
+    case 'ECONNREFUSED':
+      return (
+        `Request to ${target} failed: nothing answered at ${hostPort}. ` +
+        `The connection was refused, so check the address and that the service is running.`
+      );
+    case 'ENOTFOUND':
+    case 'EAI_AGAIN':
+      return (
+        `Request to ${target} failed: no address could be found for "${host}". ` +
+        `Check the address for typos.`
+      );
+    case 'ETIMEDOUT':
+      return `Request to ${target} failed: the connection to ${hostPort} took too long to start.`;
+    case 'ECONNRESET':
+      return `Request to ${target} failed: the other side closed the connection early.`;
+    default:
+      return `Request to ${target} failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+/**
  * One HTTP request, over node:http/https (not global fetch) so the socket
  * connects to exactly the addresses the SSRF guard checked: the pinned
  * lookup answers with those addresses and never consults real DNS, which
@@ -160,9 +200,7 @@ async function fetchChecked(
       ) {
         throw new Error(`Request to ${stripUrlQuery(currentUrl)} timed out after ${timeoutMs} ms.`);
       }
-      throw new Error(
-        `Request to ${stripUrlQuery(currentUrl)} failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      throw new Error(plainFailureMessage(err, currentUrl));
     }
 
     if (!REDIRECT_STATUSES.has(response.status)) return response;

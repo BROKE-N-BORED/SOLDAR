@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Item, NodeContext } from '@soldar/engine';
-import { httpNode } from './definition.js';
+import { httpNode, plainFailureMessage } from './definition.js';
 
 // A tiny local echo server. The SSRF guard blocks 127.0.0.1 by default, so
 // tests that hit it run with the workflow opt-out turned on — except the
@@ -225,5 +225,63 @@ describe('http', () => {
     await expect(httpNode.execute(ctx({ method: 'GET', url: '' }))).rejects.toThrow(
       'needs a URL',
     );
+  });
+
+  it('reports a refused connection in plain words, with the address', async () => {
+    // Open a port and close it again, so connecting is refused for real.
+    const dead = createServer();
+    await new Promise<void>((resolve) => {
+      dead.listen(0, '127.0.0.1', () => resolve());
+    });
+    const { port } = dead.address() as AddressInfo;
+    await new Promise<void>((resolve) => {
+      dead.close(() => resolve());
+    });
+    const err = await httpNode
+      .execute(ctx({ method: 'GET', url: `http://127.0.0.1:${port}/nope` }))
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain(`nothing answered at 127.0.0.1:${port}`);
+    expect(message).not.toContain('ECONNREFUSED');
+  });
+});
+
+describe('plainFailureMessage', () => {
+  const coded = (code: string, message: string): Error =>
+    Object.assign(new Error(message), { code });
+
+  it('maps a refused connection to plain words', () => {
+    const text = plainFailureMessage(
+      coded('ECONNREFUSED', 'connect ECONNREFUSED 127.0.0.1:9'),
+      'http://127.0.0.1:9/nope?secret=1',
+    );
+    expect(text).toContain('nothing answered at 127.0.0.1:9');
+    expect(text).toContain('http://127.0.0.1:9/nope');
+    expect(text).not.toContain('ECONNREFUSED');
+    expect(text).not.toContain('secret');
+  });
+
+  it('maps an unresolvable host to plain words', () => {
+    const text = plainFailureMessage(
+      coded('ENOTFOUND', 'getaddrinfo ENOTFOUND api.examplle.com'),
+      'https://api.examplle.com/data',
+    );
+    expect(text).toContain('no address could be found for "api.examplle.com"');
+    expect(text).not.toContain('ENOTFOUND');
+  });
+
+  it('maps a reset connection to plain words', () => {
+    const text = plainFailureMessage(
+      coded('ECONNRESET', 'read ECONNRESET'),
+      'http://example.com/feed',
+    );
+    expect(text).toContain('closed the connection early');
+    expect(text).not.toContain('ECONNRESET');
+  });
+
+  it('keeps the original message for unrecognized failures', () => {
+    const text = plainFailureMessage(new Error('something odd'), 'http://example.com/x');
+    expect(text).toBe('Request to http://example.com/x failed: something odd');
   });
 });

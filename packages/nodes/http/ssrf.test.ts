@@ -78,6 +78,20 @@ describe('assertUrlAllowed', () => {
     await expect(assertUrlAllowed('http://[::1]/')).rejects.toThrow('private address');
   });
 
+  it('phrases the refusal without an em-dash and names the fix', async () => {
+    const err = await assertUrlAllowed('http://127.0.0.1:8080/').catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toBe(
+      'Refused to call 127.0.0.1. It resolves to private address 127.0.0.1, and the ' +
+        'SSRF guard blocks local network addresses. Set settings.allowPrivateAddresses ' +
+        'to true on the workflow to allow it.',
+    );
+    expect(message).not.toContain('—');
+  });
+
   it('catches obfuscated IPv4 forms the URL parser normalizes', async () => {
     await expect(assertUrlAllowed('http://2130706433/')).rejects.toThrow('private address');
     await expect(assertUrlAllowed('http://127.1/')).rejects.toThrow('private address');

@@ -96,44 +96,46 @@
             </span>
           </span>
         </div>
-        <label
-          class="workflow-row-active"
-          title="Schedules arrive in a later version. For now, workflows only run when you press Run."
-          @click.stop
-        >
-          <input
-            type="checkbox"
-            :checked="workflow.active"
-            disabled
-            @change="toggleActive(workflow.id, ($event.target as HTMLInputElement).checked)"
-          />
-          Active
-        </label>
-        <button
-          class="btn btn-secondary btn-small"
-          type="button"
-          title="Make a copy of this workflow"
-          @click.stop="duplicate(workflow.id)"
-        >
-          Duplicate
-        </button>
-        <button
-          class="btn btn-secondary btn-small"
-          type="button"
-          title="Download this workflow as a file"
-          @click.stop="exportWorkflow(workflow.id, workflow.name)"
-        >
-          Export
-        </button>
-        <button
-          class="btn btn-icon"
-          type="button"
-          title="Delete this workflow"
-          aria-label="Delete this workflow"
-          @click.stop="askDelete(workflow.id, workflow.name)"
-        >
-          X
-        </button>
+        <div class="workflow-row-actions">
+          <label
+            class="workflow-row-active"
+            title="Schedules arrive in a later version. For now, workflows only run when you press Run."
+            @click.stop
+          >
+            <input
+              type="checkbox"
+              :checked="workflow.active"
+              disabled
+              @change="toggleActive(workflow.id, ($event.target as HTMLInputElement).checked)"
+            />
+            Active
+          </label>
+          <button
+            class="btn btn-secondary btn-small"
+            type="button"
+            title="Make a copy of this workflow"
+            @click.stop="duplicate(workflow.id)"
+          >
+            Duplicate
+          </button>
+          <button
+            class="btn btn-secondary btn-small"
+            type="button"
+            title="Download this workflow as a file"
+            @click.stop="exportWorkflow(workflow.id, workflow.name)"
+          >
+            Export
+          </button>
+          <button
+            class="btn btn-icon"
+            type="button"
+            title="Delete this workflow"
+            aria-label="Delete this workflow"
+            @click.stop="askDelete(workflow.id, workflow.name)"
+          >
+            X
+          </button>
+        </div>
       </li>
     </ul>
 

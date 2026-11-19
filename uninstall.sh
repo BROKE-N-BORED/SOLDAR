@@ -68,6 +68,6 @@ if [ "$REMOVE_DATA" = "1" ]; then
 else
   echo ""
   echo "Soldar is gone. Your workflows and runs are still in $DATA_DIR"
-  echo "— reinstall Soldar any time and they will be there."
+  echo "Reinstall Soldar any time and they will be there."
 fi
 rm -rf "${SOLDAR_UNINSTALL_TMP_DIR:-}" 2>/dev/null || true

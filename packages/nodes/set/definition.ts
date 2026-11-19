@@ -6,6 +6,29 @@ interface SetValue {
 }
 
 /**
+ * A typed value that is plainly a number: an optional minus, digits with
+ * no leading zeros (except "0" itself), and an optional decimal part.
+ * "42", "3.5", "-2" qualify; "007", "12px", "1,000", ".5" do not.
+ */
+const NUMERIC_TEXT = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/;
+
+/**
+ * A literal value typed into the editor as "42" means the number 42, so a
+ * clean numeric string becomes a number. Only literal values qualify: an
+ * expression result that happens to look numeric stays the string it is,
+ * because the user never typed it as a number. The raw (unevaluated)
+ * settings say which is which; without them, the value itself is the only
+ * evidence, and a {{ }} in it still marks it as an expression.
+ */
+function coerceLiteral(value: unknown, rawValue: unknown): unknown {
+  if (typeof value !== 'string' || !NUMERIC_TEXT.test(value)) return value;
+  const literal = typeof rawValue === 'string' ? rawValue : value;
+  if (literal.includes('{{')) return value;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : value;
+}
+
+/**
  * Set — build new fields (or overwrite existing ones) on each item.
  * Values may contain {{ }} expressions; the runner evaluates them per item
  * before this runs. With keepOnlySet, the output holds only the set fields.
@@ -35,14 +58,17 @@ export const setNode: NodeDefinition = {
   ],
   async execute(ctx) {
     const values = (Array.isArray(ctx.params.values) ? ctx.params.values : []) as SetValue[];
+    const rawValues = (
+      Array.isArray(ctx.rawParams?.values) ? ctx.rawParams.values : []
+    ) as SetValue[];
     // A null-prototype object: a field named __proto__ becomes a real field
     // instead of setting the prototype and vanishing from the output.
     const built: Record<string, unknown> = Object.create(null);
-    for (const entry of values) {
+    values.forEach((entry, index) => {
       if (entry && typeof entry.name === 'string' && entry.name !== '') {
-        built[entry.name] = entry.value;
+        built[entry.name] = coerceLiteral(entry.value, rawValues[index]?.value);
       }
-    }
+    });
     const keepOnly = ctx.params.keepOnlySet === true;
     return {
       main: ctx.input.map((item) => ({

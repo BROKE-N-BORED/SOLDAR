@@ -24,6 +24,10 @@ export interface RunState {
   startedAt: number | null;
   finishedAt: number | null;
   error: string | null;
+  /** True when this run covered one node on its own (Run just this node),
+   *  so the panel can say the node ran with one empty item instead of
+   *  data from the nodes before it. */
+  singleNode: boolean;
 }
 
 /** Data carried on each Vue Flow node. */
@@ -45,5 +49,6 @@ export function emptyRunState(): RunState {
     startedAt: null,
     finishedAt: null,
     error: null,
+    singleNode: false,
   };
 }

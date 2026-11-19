@@ -192,7 +192,7 @@ verify_node_download() {
       die "The Node checksum list did not match its signature, so the download was thrown away. Run the installer again."
     fi
   else
-    echo "Checking the download (gpg is not on this computer, so the signature could not be checked — the checksum was)..."
+    echo "Checking the download (gpg is not on this computer, so the signature could not be checked; the checksum was)..."
     curl -fsSL --max-time 30 "https://nodejs.org/dist/${version}/SHASUMS256.txt" -o "$sums_file" \
       || die "Could not fetch the Node checksum list."
   fi
@@ -461,7 +461,7 @@ main() {
   echo ""
   echo "Soldar is installed."
   echo "Double-click the Soldar icon on your desktop (or find Soldar in your applications menu) to open it."
-  echo "Soldar lives in $STABLE_DIR now — the folder you extracted the ZIP into can be deleted."
+  echo "Soldar lives in $STABLE_DIR now. The folder you extracted the ZIP into can be deleted."
   if [ "$TRUST_FAILED" = "1" ]; then
     echo ""
     echo "One thing: if double-clicking the Soldar icon opens a text editor"

@@ -24,6 +24,14 @@
 
     <template v-else>
       <p v-if="run.error" class="run-panel-error" role="alert">{{ run.error }}</p>
+      <p
+        v-if="run.singleNode && (run.status === 'success' || run.status === 'error')"
+        class="run-panel-note"
+      >
+        This run covered just the one node. It ran on its own with one
+        empty item, not on data from the nodes before it, so the result
+        can differ from a full run.
+      </p>
       <p v-if="durationText" class="run-panel-duration">{{ durationText }}</p>
       <ul class="run-steps">
         <li

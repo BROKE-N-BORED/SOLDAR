@@ -71,6 +71,10 @@ export interface NodeContext {
   input: Item[];
   /** The node's settings, expressions already evaluated. */
   params: Record<string, unknown>;
+  /** The node's settings exactly as stored, before expression evaluation.
+   *  Most nodes never need this; the Set node uses it to tell a literal
+   *  typed value apart from an expression that produced the same text. */
+  rawParams?: Record<string, unknown>;
   /** Decrypted secret, fetched on demand. Not available in Phase 1 —
    *  the credentials store arrives in Phase 4. */
   credentials: (id: string) => Promise<unknown>;

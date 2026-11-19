@@ -369,6 +369,13 @@ button {
   color: var(--molten);
 }
 
+.workflow-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
 .workflow-row-active {
   display: flex;
   align-items: center;
@@ -963,14 +970,41 @@ button {
 }
 
 .workflow-settings-toggle {
-  background: none;
-  border: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-small);
   color: var(--text);
   font: inherit;
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
-  padding: 0;
+  transition: background 150ms ease-out, border-color 150ms ease-out;
+}
+
+.workflow-settings-toggle:hover {
+  background: var(--panel-3);
+  border-color: var(--copper);
+}
+
+/* A small triangle that turns down when the section is open, so the
+   toggle reads as a collapsible control, not a panel heading. */
+.workflow-settings-chevron {
+  width: 0;
+  height: 0;
+  border-left: 6px solid var(--copper);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 150ms ease-out;
+  flex-shrink: 0;
+}
+
+.workflow-settings-chevron.open {
+  transform: rotate(90deg);
 }
 
 .workflow-settings-body {
@@ -1081,6 +1115,15 @@ button {
   border: 1px solid var(--bad);
   border-radius: var(--radius-small);
   background: rgba(224, 93, 93, 0.1);
+  font-size: 13px;
+}
+
+.run-panel-note {
+  padding: 10px 12px;
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-small);
+  background: var(--panel-2);
+  color: var(--text-dim);
   font-size: 13px;
 }
 
@@ -1413,6 +1456,14 @@ button {
     padding: 0 10px;
   }
 
+  /* The bottom tab bar carries navigation at phone widths, so the top
+     menu keeps only the wordmark, the status dot, and Stop. Showing the
+     links here too squeezed everything until the text stacked and the
+     header pushed the page sideways. */
+  .menu-nav {
+    display: none;
+  }
+
   .menu-link {
     padding: 6px 8px;
   }
@@ -1495,7 +1546,23 @@ button {
     padding: 16px 12px 32px;
   }
 
+  /* Stack the row: the name gets a full line of its own (never cut off
+     with "..."), the meta sits under it, and the controls get their own
+     row, so a thumb aimed at the row does not land on Duplicate. */
   .workflow-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .workflow-row-name {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .workflow-row-actions {
+    gap: 8px;
     flex-wrap: wrap;
   }
 }

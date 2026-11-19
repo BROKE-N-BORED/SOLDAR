@@ -22,7 +22,7 @@ import {
 } from '@soldar/engine';
 import { allNodes } from '@soldar/nodes';
 
-const USAGE = `Soldar — run a workflow from the terminal.
+const USAGE = `Soldar: run a workflow from the terminal.
 
 Usage:
   pnpm run flow run <workflow.json> [--db <path>] [--json] [--trigger-data '<json>']
@@ -126,18 +126,18 @@ function formatCounts(step: RunStepResult): string {
 }
 
 function printSummary(result: RunResult, dbPath: string): void {
-  console.log(`Soldar — ${result.workflowName} (${result.workflowId})`);
+  console.log(`Soldar: ${result.workflowName} (${result.workflowId})`);
   console.log(`Execution: ${result.executionId ?? '(not stored)'}`);
   for (const step of result.steps) {
     const ms = step.finishedAt - step.startedAt;
     if (step.status === 'success') {
       console.log(
-        `  ✓ ${step.nodeName} (${step.nodeType}) — ${formatCounts(step)} · ${formatDuration(ms)}`,
+        `  ✓ ${step.nodeName} (${step.nodeType}): ${formatCounts(step)} · ${formatDuration(ms)}`,
       );
     } else if (step.status === 'skipped') {
-      console.log(`  ○ ${step.nodeName} (${step.nodeType}) — skipped, no items arrived`);
+      console.log(`  ○ ${step.nodeName} (${step.nodeType}): skipped, no items arrived`);
     } else {
-      console.log(`  ✗ ${step.nodeName} (${step.nodeType}) — ${step.error}`);
+      console.log(`  ✗ ${step.nodeName} (${step.nodeType}): ${step.error}`);
     }
   }
   if (result.status === 'success') {

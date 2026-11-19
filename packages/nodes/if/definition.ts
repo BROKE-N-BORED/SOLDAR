@@ -116,7 +116,7 @@ export const ifNode: NodeDefinition = {
       displayName: 'Conditions',
       type: 'json',
       description:
-        'A list of { left, operator, right }. Left and right may contain {{ }} expressions.',
+        'One check per row: a value on the left, a comparison in the middle, and a value on the right. Either side can pull from the incoming data with {{ }} expressions.',
       default: [],
     },
     {

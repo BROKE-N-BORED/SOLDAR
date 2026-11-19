@@ -93,7 +93,12 @@
               :aria-expanded="settingsOpen"
               @click="settingsOpen = !settingsOpen"
             >
-              {{ settingsOpen ? 'Hide workflow settings' : 'Workflow settings' }}
+              <span
+                class="workflow-settings-chevron"
+                :class="{ open: settingsOpen }"
+                aria-hidden="true"
+              ></span>
+              Workflow settings
             </button>
             <div v-if="settingsOpen" class="workflow-settings-body">
               <label class="field-toggle">
@@ -377,7 +382,7 @@ function syncFlowFromWorkflow(): void {
       node.position.length !== 2 ||
       !node.position.every((n) => typeof n === 'number' && Number.isFinite(n))
     ) {
-      node.position = [120 + (index % 3) * 280, 120 + Math.floor(index / 3) * 170];
+      node.position = [60 + (index % 3) * 240, 100 + Math.floor(index / 3) * 170];
     }
   });
   flowNodes.value = workflow.value.nodes.map((node) =>
@@ -427,8 +432,14 @@ function onNodesChange(changes: NodeChange[]): void {
     if (change.type === 'add') continue;
     const flowNode = flowNodes.value.find((n) => n.id === change.id);
     if (change.type === 'position') {
-      if (flowNode) flowNode.position = change.position;
-      if (change.dragging === false && workflow.value && flowNode) {
+      // The drag-end change (dragging: false) carries no position at all:
+      // the library only flags that the drag stopped. Assigning it would
+      // wipe the node's position to undefined, and the sync below would
+      // crash reading .x off it (the console TypeError seen while
+      // dragging). Only a change that carries a position moves the node;
+      // at drag end the node still holds its last dragged position.
+      if (flowNode && change.position) flowNode.position = change.position;
+      if (change.dragging === false && workflow.value && flowNode?.position) {
         const node = workflow.value.nodes.find((n) => n.id === change.id);
         if (node) {
           node.position = [Math.round(flowNode.position.x), Math.round(flowNode.position.y)];
@@ -538,10 +549,12 @@ function addNode(type: string, position?: { x: number; y: number }): void {
     id = `n_${Math.random().toString(36).slice(2, 8)}`;
   } while (workflow.value.nodes.some((n) => n.id === id));
   const count = workflow.value.nodes.length;
-  // Cascade across the canvas in a row, wide enough that nodes never overlap.
+  // Cascade across the canvas in a row, wide enough that nodes never
+  // overlap, and kept left so the third node in a row stays clear of the
+  // settings sidebar at ordinary window widths.
   const at = position ?? {
-    x: 120 + (count % 3) * 280,
-    y: 120 + Math.floor(count / 3) * 170,
+    x: 60 + (count % 3) * 240,
+    y: 100 + Math.floor(count / 3) * 170,
   };
   const node: WorkflowNode = {
     id,
@@ -833,6 +846,7 @@ async function runNode(nodeId: string): Promise<void> {
     ...emptyRunState(),
     status: 'running',
     startedAt: Date.now(),
+    singleNode: true,
   };
   try {
     const { executionId } = await api.runNode(workflow.value.id, nodeId);

@@ -129,7 +129,7 @@ export function validateWorkflow(workflow: Workflow, definitions?: NodeDefinitio
     if (seenConnections.has(key)) {
       throw new WorkflowValidationError(
         `Two identical wires run from "${conn.from}" to "${conn.to}". One is ` +
-          `enough — duplicates make the next node process everything twice.`,
+          `enough. Duplicates make the next node process everything twice.`,
       );
     }
     seenConnections.add(key);
@@ -173,7 +173,7 @@ function findCycle(workflow: Workflow): string[] | null {
     if (depth > MAX_CYCLE_DEPTH) {
       throw new WorkflowValidationError(
         `The workflow chain runs deeper than ${MAX_CYCLE_DEPTH} nodes. ` +
-          `That is almost certainly a mistake — split the workflow into smaller pieces.`,
+          `That is almost certainly a mistake. Split the workflow into smaller pieces.`,
       );
     }
     state.set(id, 1);

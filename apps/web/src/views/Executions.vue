@@ -156,6 +156,7 @@ const detailAsRun = computed<RunState>(() => {
       startedAt: null,
       finishedAt: null,
       error: null,
+      singleNode: false,
     };
   }
   const { execution, steps } = store.detail;
@@ -166,6 +167,7 @@ const detailAsRun = computed<RunState>(() => {
     startedAt: execution.startedAt,
     finishedAt: execution.finishedAt,
     error: execution.error,
+    singleNode: false,
   };
 });
 
