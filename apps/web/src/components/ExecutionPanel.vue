@@ -52,6 +52,7 @@
           </button>
           <div v-if="expandedNodeId === step.nodeId" class="run-step-data">
             <p v-if="step.error" class="run-panel-error" role="alert">{{ step.error }}</p>
+            <p v-if="step.note" class="run-step-note">{{ step.note }}</p>
             <h3 class="run-data-title">In</h3>
             <pre class="run-data">{{ pretty(step.input) }}</pre>
             <h3 class="run-data-title">Out</h3>

@@ -55,9 +55,17 @@ describe('server API', () => {
     const nodes = await app.inject({ method: 'GET', url: '/api/nodes' });
     expect(nodes.statusCode).toBe(200);
     const list = nodes.json() as Array<Record<string, unknown>>;
-    expect(list).toHaveLength(5);
+    expect(list).toHaveLength(7);
     const types = list.map((n) => n.type).sort();
-    expect(types).toEqual(['code', 'http', 'if', 'manual-trigger', 'set']);
+    expect(types).toEqual([
+      'code',
+      'http',
+      'if',
+      'manual-trigger',
+      'schedule-trigger',
+      'set',
+      'webhook-trigger',
+    ]);
     for (const node of list) {
       expect(node).not.toHaveProperty('execute');
       expect(Array.isArray(node.parameters)).toBe(true);

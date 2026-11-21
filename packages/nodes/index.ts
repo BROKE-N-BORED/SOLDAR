@@ -6,10 +6,14 @@ import { codeNode } from './code/definition.js';
 import { httpNode } from './http/definition.js';
 import { ifNode } from './if/definition.js';
 import { manualTrigger } from './manual-trigger/definition.js';
+import { scheduleTrigger } from './schedule-trigger/definition.js';
 import { setNode } from './set/definition.js';
+import { webhookTrigger } from './webhook-trigger/definition.js';
 
 export const allNodes: NodeDefinition[] = [
   manualTrigger,
+  scheduleTrigger,
+  webhookTrigger,
   setNode,
   ifNode,
   codeNode,
@@ -36,4 +40,4 @@ export function getNodeDefinition(type: string): NodeDefinition | undefined {
   return allNodes.find((node) => node.type === type);
 }
 
-export { codeNode, httpNode, ifNode, manualTrigger, setNode };
+export { codeNode, httpNode, ifNode, manualTrigger, scheduleTrigger, setNode, webhookTrigger };

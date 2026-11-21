@@ -1,6 +1,6 @@
 // Drizzle schema for the Soldar SQLite database (Phase 2: executions +
 // workflows. Credentials / settings tables arrive with the server in Phase 4+).
-// The DDL in storage.ts (migration v1/v2) matches this file exactly.
+// The DDL in storage.ts (migrations v1 to v3) matches this file exactly.
 
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
@@ -55,6 +55,8 @@ export const executionSteps = sqliteTable(
     outputJson: text('output_json').notNull(),
     /** Plain error message when status is error. */
     error: text('error'),
+    /** Plain-words reason the step did not run (skipped steps). */
+    note: text('note'),
     /** Epoch milliseconds. */
     startedAt: integer('started_at').notNull(),
     /** Epoch milliseconds. */

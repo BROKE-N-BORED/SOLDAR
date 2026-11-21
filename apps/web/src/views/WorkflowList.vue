@@ -99,13 +99,12 @@
         <div class="workflow-row-actions">
           <label
             class="workflow-row-active"
-            title="Schedules arrive in a later version. For now, workflows only run when you press Run."
+            title="When Active is on, this workflow runs on its schedules and answers its webhooks. When it is off, it only runs when you press Run."
             @click.stop
           >
             <input
               type="checkbox"
               :checked="workflow.active"
-              disabled
               @change="toggleActive(workflow.id, ($event.target as HTMLInputElement).checked)"
             />
             Active
@@ -296,8 +295,6 @@ async function onImportFile(event: Event): Promise<void> {
 }
 
 async function toggleActive(id: string, active: boolean): Promise<void> {
-  // The toggle is disabled until schedules exist (Phase 3); this stays as
-  // the handler for when it is enabled again.
   try {
     await store.toggleActive(id, active);
   } catch (err) {

@@ -1118,6 +1118,12 @@ button {
   font-size: 13px;
 }
 
+.run-step-note {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
 .run-panel-note {
   padding: 10px 12px;
   border: 1px solid var(--edge-strong);

@@ -16,11 +16,10 @@
           aria-label="Workflow name"
           @change="renameWorkflow"
         />
-        <label class="editor-active" title="Schedules arrive in a later version. For now, workflows only run when you press Run.">
+        <label class="editor-active" title="When Active is on, this workflow runs on its schedules and answers its webhooks. When it is off, it only runs when you press Run.">
           <input
             type="checkbox"
             :checked="workflow.active"
-            disabled
             @change="toggleActive"
           />
           Active
@@ -636,8 +635,6 @@ function renameWorkflow(): void {
 }
 
 async function toggleActive(event: Event): Promise<void> {
-  // The toggle is disabled until schedules exist (Phase 3); this stays as
-  // the handler for when it is enabled again.
   if (!workflow.value) return;
   const active = (event.target as HTMLInputElement).checked;
   const previous = workflow.value.active;

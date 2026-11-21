@@ -86,7 +86,11 @@ export class RunService {
    * already be validated — the caller checks that first. Rejects with
    * RunServiceBusyError when two runs are already going.
    */
-  start(workflow: Workflow, triggerData?: Item[]): Promise<string> {
+  start(
+    workflow: Workflow,
+    triggerData?: Item[],
+    options?: { singleNode?: boolean; trigger?: string },
+  ): Promise<string> {
     if (this.running.size >= MAX_CONCURRENT_RUNS) {
       return Promise.reject(new RunServiceBusyError());
     }
@@ -96,6 +100,8 @@ export class RunService {
       const runPromise = runWorkflow(workflow, allNodes, {
         storage: this.storage,
         triggerData,
+        singleNode: options?.singleNode,
+        triggerName: options?.trigger,
         signal: controller.signal,
         warn: (msg) => this.logger?.warn(msg),
         onExecutionStart: (id) => {

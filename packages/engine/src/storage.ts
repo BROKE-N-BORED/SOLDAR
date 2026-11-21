@@ -31,6 +31,8 @@ export interface StepRecord {
   inputJson: string;
   outputJson: string;
   error: string | null;
+  /** Plain-words reason the step did not run (skipped steps), else null. */
+  note: string | null;
   startedAt: number;
   finishedAt: number;
 }
@@ -173,6 +175,7 @@ function asStepRecord(row: unknown): StepRecord {
     inputJson: reqString(row, 'inputJson', 'run step'),
     outputJson: reqString(row, 'outputJson', 'run step'),
     error: optString(row, 'error', 'run step'),
+    note: optString(row, 'note', 'run step'),
     startedAt: reqNumber(row, 'startedAt', 'run step'),
     finishedAt: reqNumber(row, 'finishedAt', 'run step'),
   };
@@ -246,6 +249,12 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ON executions (workflow_id);
       CREATE INDEX IF NOT EXISTS idx_executions_started_at
         ON executions (started_at);
+    `,
+  },
+  {
+    version: 3,
+    sql: `
+      ALTER TABLE execution_steps ADD COLUMN note TEXT;
     `,
   },
 ];

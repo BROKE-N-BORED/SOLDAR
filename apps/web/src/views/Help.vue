@@ -37,6 +37,8 @@
       <h2>The nodes</h2>
       <ul>
         <li><strong>Manual Trigger.</strong> Starts the run when you press Run.</li>
+        <li><strong>Schedule Trigger.</strong> Starts the run on a clock, at the times in its schedule pattern. The workflow must be Active.</li>
+        <li><strong>Webhook Trigger.</strong> Starts the run when a request arrives at the workflow's own web address. The address ending is in the node's settings, and the full address is Soldar's address plus /webhook/ and that ending. The workflow must be Active.</li>
         <li><strong>Set.</strong> Adds or changes fields on the data.</li>
         <li><strong>IF.</strong> Sends the data out its true output when the check holds, and out its false output when it doesn't. Each condition is a row: a value, a comparison, and something to compare it with. Several conditions combine with AND (all must hold) or OR (any must hold).</li>
         <li><strong>Code.</strong> Runs your own JavaScript on the data, safely boxed in.</li>
@@ -45,12 +47,13 @@
     </section>
 
     <section class="help-section">
-      <h2>Active (coming later)</h2>
+      <h2>Active</h2>
       <p>
-        The Active switch on a workflow does nothing yet. Schedules and
-        automatic triggers arrive in a later version; for now, a workflow
-        only runs when you press Run. The switch is shown greyed out so
-        nobody mistakes it for something that works.
+        Turn a workflow Active and it runs on its own: a Schedule Trigger
+        fires at its times, and a Webhook Trigger answers requests at its
+        address. Turn Active off and both stop; the workflow then only
+        runs when you press Run. Active workflows pick their schedules
+        back up on their own when Soldar restarts.
       </p>
     </section>
 

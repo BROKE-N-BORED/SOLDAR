@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { topologicalSort, validateWorkflow, WorkflowValidationError } from './graph.js';
+import {
+  assertHasTrigger,
+  reachableFromTriggers,
+  topologicalSort,
+  validateWorkflow,
+  WorkflowValidationError,
+} from './graph.js';
 import type { NodeDefinition, Workflow } from './types.js';
 
 function node(id: string, name = id, type = 'set'): Workflow['nodes'][number] {
@@ -221,5 +227,68 @@ describe('topologicalSort', () => {
     expect(() =>
       topologicalSort(workflow([node('a', 'A')], [{ from: 'a', to: 'ghost' }])),
     ).toThrow('does not exist');
+  });
+});
+
+const DEFS: NodeDefinition[] = [
+  {
+    type: 'trigger',
+    displayName: 'Trigger',
+    description: 'A trigger.',
+    inputs: 0,
+    outputs: ['main'],
+    parameters: [],
+    async execute(ctx) {
+      return { main: ctx.input };
+    },
+  },
+  {
+    type: 'set',
+    displayName: 'Set',
+    description: 'A normal node.',
+    inputs: 1,
+    outputs: ['main'],
+    parameters: [],
+    async execute(ctx) {
+      return { main: ctx.input };
+    },
+  },
+];
+
+describe('reachableFromTriggers', () => {
+  it('reaches the trigger and everything wired downstream of it', () => {
+    const reached = reachableFromTriggers(
+      workflow(
+        [node('a', 'A', 'trigger'), node('b', 'B'), node('c', 'C'), node('d', 'D')],
+        [
+          { from: 'a', to: 'b' },
+          { from: 'c', to: 'd' },
+        ],
+      ),
+      DEFS,
+    );
+    expect([...reached].sort()).toEqual(['a', 'b']);
+  });
+
+  it('reaches nothing when there is no trigger', () => {
+    const reached = reachableFromTriggers(
+      workflow([node('a', 'A'), node('b', 'B')], [{ from: 'a', to: 'b' }]),
+      DEFS,
+    );
+    expect(reached.size).toBe(0);
+  });
+});
+
+describe('assertHasTrigger', () => {
+  it('accepts a workflow with a trigger node', () => {
+    expect(() =>
+      assertHasTrigger(workflow([node('a', 'A', 'trigger')], []), DEFS),
+    ).not.toThrow();
+  });
+
+  it('refuses a workflow with no trigger node, in plain words', () => {
+    expect(() => assertHasTrigger(workflow([node('a', 'A')], []), DEFS)).toThrow(
+      'no trigger node',
+    );
   });
 });

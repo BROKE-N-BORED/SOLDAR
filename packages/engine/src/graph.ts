@@ -205,6 +205,64 @@ function findCycle(workflow: Workflow): string[] | null {
 }
 
 /**
+ * A workflow needs at least one trigger node (a definition with no
+ * inputs) or nothing can start a run. Throws WorkflowValidationError
+ * with a plain message when there is none.
+ */
+export function assertHasTrigger(
+  workflow: Workflow,
+  definitions: NodeDefinition[],
+): void {
+  const byType = new Map(definitions.map((d) => [d.type, d]));
+  const hasTrigger = workflow.nodes.some(
+    (n) => byType.get(n.type)?.inputs === 0,
+  );
+  if (!hasTrigger) {
+    throw new WorkflowValidationError(
+      'This workflow has no trigger node, so nothing can start it. ' +
+        'Add a Manual Trigger node and wire it to the first step.',
+    );
+  }
+}
+
+/**
+ * The nodes a run can actually reach: every trigger node (a definition
+ * with no inputs), plus everything downstream of them along the wires.
+ * A node outside this set is loose — it sits on the canvas but no path
+ * from a trigger leads to it, so a run never executes it.
+ */
+export function reachableFromTriggers(
+  workflow: Workflow,
+  definitions: NodeDefinition[],
+): Set<string> {
+  const byType = new Map(definitions.map((d) => [d.type, d]));
+  const outgoing = new Map<string, string[]>();
+  for (const node of workflow.nodes) outgoing.set(node.id, []);
+  for (const conn of workflow.connections) {
+    outgoing.get(conn.from)?.push(conn.to);
+  }
+  const reachable = new Set<string>();
+  const queue: string[] = [];
+  for (const node of workflow.nodes) {
+    if (byType.get(node.type)?.inputs === 0) {
+      reachable.add(node.id);
+      queue.push(node.id);
+    }
+  }
+  let head = 0;
+  while (head < queue.length) {
+    const id = queue[head++]!;
+    for (const next of outgoing.get(id) ?? []) {
+      if (!reachable.has(next)) {
+        reachable.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  return reachable;
+}
+
+/**
  * Nodes in run order: a node appears only after everything feeding into it.
  * Throws WorkflowValidationError if the graph has a cycle.
  */

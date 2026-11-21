@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { ENGINE_VERSION, type Storage, type WorkflowStore } from '@soldar/engine';
 import { allNodes } from '@soldar/nodes';
 import { RunService } from './run-service.js';
+import { SchedulerService } from './scheduler.js';
 import type { Logger } from './logger.js';
 import type { RouteContext } from './routes/context.js';
 import { registerWorkflowRoutes } from './routes/workflows.js';
@@ -19,6 +20,7 @@ import { registerDebugRoute } from './routes/debug.js';
 import { registerUpdateRoutes } from './routes/update.js';
 import { registerShutdownRoute } from './routes/shutdown.js';
 import { registerWsRoute } from './routes/ws.js';
+import { registerWebhookRoutes } from './routes/webhooks.js';
 import type { UpdateService } from './update.js';
 
 export interface AppOptions {
@@ -50,20 +52,24 @@ export interface AppOptions {
   webDistDir?: string;
 }
 
-export async function createApp(options: AppOptions): Promise<FastifyInstance & { runs: RunService }> {
+export async function createApp(options: AppOptions): Promise<FastifyInstance & { runs: RunService; scheduler: SchedulerService }> {
   // pluginTimeout: Fastify's default is 10 s, which a cold start on a slow
   // PC (spinning disk, busy CPU) can genuinely exceed while a plugin is
   // still loading. 30 s is ample without hiding a real hang.
   const app = Fastify({ logger: false, pluginTimeout: 30000 }) as unknown as FastifyInstance & {
     runs: RunService;
+    scheduler: SchedulerService;
   };
   // `runs` is attached on the next line, and the entry point uses it to
   // wait for runs to finish at shutdown.
   const runs = new RunService(options.storage, options.logger);
   app.runs = runs;
+  const scheduler = new SchedulerService(options.storage, runs, options.logger);
+  app.scheduler = scheduler;
   const ctx: RouteContext = {
     storage: options.storage,
     runs,
+    scheduler,
     logger: options.logger,
     logPath: options.logPath,
     definitions: allNodes,
@@ -101,6 +107,14 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance & 
   registerUpdateRoutes(app, ctx);
   registerShutdownRoute(app, ctx);
   registerWsRoute(app, ctx);
+  registerWebhookRoutes(app, ctx);
+
+  // Active workflows pick their schedules back up on every start, and
+  // the cron timers stop when the server closes.
+  scheduler.syncAll();
+  app.addHook('onClose', async () => {
+    scheduler.stopAll();
+  });
 
   // Serve the built web app in production, with an SPA fallback: any GET
   // that is not an API or WebSocket path serves index.html.

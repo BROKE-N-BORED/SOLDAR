@@ -1,1 +1,1 @@
-{"dependencies":{"@soldar/engine":"workspace:*"},"main":"./dist/index.js","name":"@soldar/nodes","private":true,"scripts":{"build":"tsc -b"},"type":"module","types":"./dist/index.d.ts","version":"0.3.1"}
+{"dependencies":{"@soldar/engine":"workspace:*"},"main":"./dist/index.js","name":"@soldar/nodes","private":true,"scripts":{"build":"tsc -b"},"type":"module","types":"./dist/index.d.ts","version":"0.4.0"}

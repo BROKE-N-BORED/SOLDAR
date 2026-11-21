@@ -257,8 +257,10 @@ describe('runWorkflow', () => {
 
   it('warns when wiring contradicts a node inputs declaration', async () => {
     const warnings: string[] = [];
-    // A trigger with a wire feeding it, and a normal node with none.
-    await runWorkflow(
+    // A trigger with a wire feeding it still warns. A normal node with
+    // no wires no longer warns: it is loose now, so it is skipped with
+    // a note on its step instead of running as a trigger.
+    const result = await runWorkflow(
       wf(
         [
           node('t', 'trigger', 'Start'),
@@ -270,12 +272,13 @@ describe('runWorkflow', () => {
       ALL,
       { warn: (msg) => warnings.push(msg) },
     );
-    expect(warnings).toHaveLength(2);
+    expect(warnings).toHaveLength(1);
     const joined = warnings.join('\n');
     expect(joined).toContain('"Second trigger"');
     expect(joined).toContain('is a trigger');
-    expect(joined).toContain('"Lonely"');
-    expect(joined).toContain('nothing feeds into it');
+    const lonely = result.steps.find((s) => s.nodeName === 'Lonely')!;
+    expect(lonely.status).toBe('skipped');
+    expect(lonely.note).toContain('Not wired to the trigger');
   });
 
   it('does not warn when the wiring matches the declarations', async () => {
@@ -384,6 +387,122 @@ describe('runWorkflow', () => {
       expect(steps).toHaveLength(2);
       expect(steps[1].status).toBe('error');
       expect(steps[1].error).toBe('kaboom');
+    } finally {
+      storage.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips loose nodes instead of running them', async () => {
+    const result = await runWorkflow(
+      wf(
+        [
+          node('t', 'trigger', 'Start'),
+          node('a', 'tag', 'Tag it', { field: 'x', value: 1 }),
+          node('l', 'pass', 'Loose'),
+        ],
+        [{ from: 't', to: 'a' }],
+      ),
+      ALL,
+      { triggerData: [{ json: { seed: true } }] },
+    );
+    expect(result.status).toBe('success');
+    const loose = result.steps.find((s) => s.nodeName === 'Loose')!;
+    expect(loose.status).toBe('skipped');
+    expect(loose.note).toContain('Not wired to the trigger');
+    expect(result.steps.find((s) => s.nodeName === 'Tag it')!.status).toBe('success');
+  });
+
+  it('a loose failing node cannot break the run', async () => {
+    const result = await runWorkflow(
+      wf(
+        [
+          node('t', 'trigger', 'Start'),
+          node('a', 'pass', 'Pass'),
+          node('f', 'fail', 'Loose boom'),
+        ],
+        [{ from: 't', to: 'a' }],
+      ),
+      ALL,
+    );
+    expect(result.status).toBe('success');
+    expect(result.steps.find((s) => s.nodeName === 'Loose boom')!.status).toBe('skipped');
+  });
+
+  it('skips a node wired only from a loose node', async () => {
+    const result = await runWorkflow(
+      wf(
+        [
+          node('t', 'trigger', 'Start'),
+          node('l', 'pass', 'Loose'),
+          node('d', 'pass', 'Downstream of loose'),
+        ],
+        [{ from: 'l', to: 'd' }],
+      ),
+      ALL,
+    );
+    expect(result.status).toBe('success');
+    const downstream = result.steps.find((s) => s.nodeName === 'Downstream of loose')!;
+    expect(downstream.status).toBe('skipped');
+    expect(downstream.note).toContain('Not wired to the trigger');
+  });
+
+  it('refuses a workflow with no trigger node', async () => {
+    await expect(
+      runWorkflow(wf([node('a', 'pass', 'Pass')], []), ALL),
+    ).rejects.toThrow('no trigger node');
+  });
+
+  it('singleNode runs a lone node with no trigger anywhere', async () => {
+    const result = await runWorkflow(
+      wf([node('a', 'tag', 'Tag it', { field: 'x', value: 7 })], []),
+      ALL,
+      { singleNode: true, triggerData: [{ json: {} }] },
+    );
+    expect(result.status).toBe('success');
+    expect(result.steps[0].output.main).toEqual([{ json: { x: 7 } }]);
+  });
+
+  it('notes why a node on an untaken branch was skipped', async () => {
+    const result = await runWorkflow(
+      wf(
+        [
+          node('t', 'trigger', 'Start'),
+          node('b', 'branch', 'Pick', { go: false }),
+          node('y', 'pass', 'Yes path'),
+          node('n', 'pass', 'No path'),
+        ],
+        [
+          { from: 't', to: 'b' },
+          { from: 'b', to: 'y', output: 'yes' },
+          { from: 'b', to: 'n', output: 'no' },
+        ],
+      ),
+      ALL,
+    );
+    expect(result.status).toBe('success');
+    const yes = result.steps.find((s) => s.nodeName === 'Yes path')!;
+    expect(yes.status).toBe('skipped');
+    expect(yes.note).toContain('Nothing arrived on its wires');
+  });
+
+  it('persists the skip note on the stored step', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'soldar-runner-test-'));
+    const storage = createStorage(join(dir, 'run.db'));
+    try {
+      const result = await runWorkflow(
+        wf(
+          [node('t', 'trigger', 'Start'), node('l', 'pass', 'Loose')],
+          [],
+        ),
+        ALL,
+        { storage },
+      );
+      expect(result.status).toBe('success');
+      const steps = storage.listSteps(result.executionId!);
+      const loose = steps.find((s) => s.nodeName === 'Loose')!;
+      expect(loose.status).toBe('skipped');
+      expect(loose.note).toContain('Not wired to the trigger');
     } finally {
       storage.close();
       rmSync(dir, { recursive: true, force: true });

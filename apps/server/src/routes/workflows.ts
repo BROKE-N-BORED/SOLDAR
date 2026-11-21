@@ -6,6 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import {
+  assertHasTrigger,
   validateWorkflow,
   WorkflowValidationError,
   type Workflow,
@@ -13,6 +14,43 @@ import {
 import type { RouteContext } from './context.js';
 import { parseTriggerData } from '../trigger-data.js';
 import { RunServiceBusyError } from '../run-service.js';
+import { isValidCronPattern } from '../scheduler.js';
+
+const WEBHOOK_PATH_OK = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Trigger nodes get their final form at save time: a Webhook Trigger
+ * with no address ending gets a random one (so addresses cannot be
+ * guessed), a typed ending must be address-safe, and a Schedule
+ * Trigger's pattern must actually parse, so a broken schedule is
+ * refused at save instead of silently never running.
+ */
+function prepareTriggerNodes(workflow: Workflow): void {
+  for (const node of workflow.nodes) {
+    if (node.type === 'webhook-trigger') {
+      const raw = node.parameters?.path;
+      const path = typeof raw === 'string' ? raw.trim() : '';
+      if (path === '') {
+        node.parameters = {
+          ...node.parameters,
+          path: randomBytes(12).toString('hex'),
+        };
+      } else if (!WEBHOOK_PATH_OK.test(path)) {
+        throw new WorkflowValidationError(
+          `Webhook node "${node.name}": the address ending "${path}" will not work in an address. Use only letters, numbers, dashes, and underscores.`,
+        );
+      }
+    }
+    if (node.type === 'schedule-trigger') {
+      const pattern = node.parameters?.cron;
+      if (!isValidCronPattern(pattern)) {
+        throw new WorkflowValidationError(
+          `Schedule node "${node.name}": the schedule does not parse. It needs five fields (minute, hour, day of month, month, day of week), like "0 9 * * *" for every day at 9 AM.`,
+        );
+      }
+    }
+  }
+}
 
 function newWorkflowId(): string {
   return `wf_${randomBytes(8).toString('hex')}`;
@@ -133,7 +171,10 @@ export function registerWorkflowRoutes(app: FastifyInstance, ctx: RouteContext):
     // Anything with nodes gets the full graph check.
     const isEmptyDraft = body.nodes.length === 0 && body.connections.length === 0;
     try {
-      if (!isEmptyDraft) validateWorkflow(body, ctx.definitions);
+      if (!isEmptyDraft) {
+        validateWorkflow(body, ctx.definitions);
+        prepareTriggerNodes(body);
+      }
     } catch (err) {
       const message =
         err instanceof WorkflowValidationError || err instanceof Error
@@ -147,6 +188,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, ctx: RouteContext):
       reply.code(404);
       return { error: 'No workflow with that id.' };
     }
+    ctx.scheduler.syncWorkflow(id);
     return { ...summary(record), workflow: body };
   });
 
@@ -162,6 +204,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, ctx: RouteContext):
       reply.code(404);
       return { error: 'No workflow with that id.' };
     }
+    ctx.scheduler.syncWorkflow(id);
     return summary(record);
   });
 
@@ -173,6 +216,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, ctx: RouteContext):
       return { error: 'No workflow with that id.' };
     }
     ctx.storage.deleteWorkflow(id);
+    ctx.scheduler.removeWorkflow(id);
     ctx.logger.info(`Workflow deleted: ${id} "${record.name}"`);
     reply.code(204);
     return;
@@ -204,6 +248,13 @@ export function registerWorkflowRoutes(app: FastifyInstance, ctx: RouteContext):
       id: newWorkflowId(),
       name,
       active: false,
+      // A copy must not share the original's webhook address: blank the
+      // paths and the next save assigns fresh random ones.
+      nodes: workflow.nodes.map((node) =>
+        node.type === 'webhook-trigger'
+          ? { ...node, parameters: { ...node.parameters, path: '' } }
+          : node,
+      ),
     };
     const created = ctx.storage.createWorkflow(copy);
     ctx.logger.info(`Workflow duplicated: ${created.id} "${created.name}" from ${id}`);
@@ -246,7 +297,9 @@ export function registerWorkflowRoutes(app: FastifyInstance, ctx: RouteContext):
       return { error: err instanceof Error ? err.message : 'Bad trigger data.' };
     }
     try {
-      const executionId = await ctx.runs.start(single, triggerData);
+      const executionId = await ctx.runs.start(single, triggerData, {
+        singleNode: true,
+      });
       ctx.logger.info(
         `Run started: ${executionId} for node "${node.name}" in workflow ${id}`,
       );
@@ -281,6 +334,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, ctx: RouteContext):
     }
     try {
       validateWorkflow(workflow, ctx.definitions);
+      assertHasTrigger(workflow, ctx.definitions);
     } catch (err) {
       const message =
         err instanceof WorkflowValidationError || err instanceof Error

@@ -126,17 +126,23 @@ test('a duplicate node name warns and blocks Save', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
 });
 
-test('the Active toggle is disabled until schedules exist', async ({ page }) => {
+test('the Active toggle turns a workflow on and off', async ({ page }) => {
   const id = await createWorkflow(page, 'Active flow');
   await page.goto(`/workflows/${id}`);
   const toggle = page.locator('.editor-active input[type="checkbox"]');
-  await expect(toggle).toBeDisabled();
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).not.toBeChecked();
+  await toggle.check();
+  await expect(toggle).toBeChecked();
 
   await page.goto('/');
   const rowToggle = page
     .locator('.workflow-row', { hasText: 'Active flow' })
     .locator('input[type="checkbox"]');
-  await expect(rowToggle).toBeDisabled();
+  await expect(rowToggle).toBeEnabled();
+  await expect(rowToggle).toBeChecked();
+  await rowToggle.uncheck();
+  await expect(rowToggle).not.toBeChecked();
 });
 
 test('Stop ends a running run', async ({ page }) => {
@@ -368,6 +374,6 @@ test('the workflow settings SSRF opt-out saves and persists', async ({ page }) =
 test('Help explains IF outputs and the Active switch', async ({ page }) => {
   await page.goto('/help');
   await expect(page.locator('.help')).toContainText('true output');
-  await expect(page.locator('.help')).toContainText('Active (coming later)');
+  await expect(page.locator('.help')).toContainText('runs on its own');
   await expect(page.locator('.help')).toContainText('$input.all()');
 });

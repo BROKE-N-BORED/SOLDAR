@@ -7,11 +7,13 @@
 import type { NodeDefinition, Storage, WorkflowStore } from '@soldar/engine';
 import type { Logger } from '../logger.js';
 import type { RunService } from '../run-service.js';
+import type { SchedulerService } from '../scheduler.js';
 import type { UpdateService } from '../update.js';
 
 export interface RouteContext {
   storage: Storage & WorkflowStore;
   runs: RunService;
+  scheduler: SchedulerService;
   logger: Logger;
   logPath: string;
   /** Every built-in node, so saving can check node types and wire outputs. */

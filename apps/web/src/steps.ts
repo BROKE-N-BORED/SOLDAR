@@ -33,6 +33,7 @@ export function stepFromRecord(record: StepRecord): StepData {
     input,
     output,
     error,
+    note: record.note ?? undefined,
     startedAt: record.startedAt,
     finishedAt: record.finishedAt,
   };

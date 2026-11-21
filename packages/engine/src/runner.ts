@@ -9,7 +9,12 @@
 // 5. On a node error: stop the run, record the error on that step.
 
 import { evaluateParameters, type ExpressionScope } from './expressions.js';
-import { topologicalSort, validateWorkflow, WorkflowValidationError } from './graph.js';
+import {
+  assertHasTrigger,
+  reachableFromTriggers,
+  topologicalSort,
+  validateWorkflow,
+} from './graph.js';
 import type { Storage } from './storage.js';
 import type {
   Item,
@@ -30,6 +35,8 @@ export interface RunStepResult {
   input: Item[];
   output: NodeOutput;
   error?: string;
+  /** Plain-words reason a step did not run (a skipped step). */
+  note?: string;
   startedAt: number;
   finishedAt: number;
 }
@@ -70,6 +77,15 @@ export interface RunOptions {
    * warnings.
    */
   warn?: (msg: string) => void;
+  /**
+   * True when the caller is running one node on its own ("Run just this
+   * node"): the reachability rule is skipped and the node runs with the
+   * trigger data, exactly as a trigger would.
+   */
+  singleNode?: boolean;
+  /** How this run was started: 'manual' (default), 'schedule', or 'webhook'.
+   *  Recorded on the execution so the history can say what started it. */
+  triggerName?: string;
 }
 
 function errorMessage(err: unknown): string {
@@ -97,6 +113,18 @@ export async function runWorkflow(
   validateWorkflow(workflow, definitions);
   const order = topologicalSort(workflow);
 
+  // Only nodes a trigger can reach take part in a run. A loose node (on
+  // the canvas but wired to nothing a trigger reaches) is recorded as
+  // skipped instead of running — before this, a half-built loose node
+  // could fail or pollute every run. A workflow with no trigger node at
+  // all cannot start, and says so plainly. Single-node runs are exempt:
+  // the one node is the whole point of the run.
+  let reachable: Set<string> | null = null;
+  if (!options.singleNode) {
+    assertHasTrigger(workflow, definitions);
+    reachable = reachableFromTriggers(workflow, definitions);
+  }
+
   const incoming = new Map<string, { from: string; output: string }[]>();
   for (const node of workflow.nodes) incoming.set(node.id, []);
   for (const conn of workflow.connections) {
@@ -107,7 +135,7 @@ export async function runWorkflow(
   const execution = storage?.createExecution({
     workflowId: workflow.id,
     workflowName: workflow.name,
-    trigger: 'manual',
+    trigger: options.triggerName ?? 'manual',
     startedAt,
   });
   const executionId = execution?.id ?? null;
@@ -129,6 +157,7 @@ export async function runWorkflow(
       inputJson: JSON.stringify(step.input),
       outputJson: JSON.stringify(step.output),
       error: step.error ?? null,
+      note: step.note ?? null,
       startedAt: step.startedAt,
       finishedAt: step.finishedAt,
     });
@@ -165,6 +194,29 @@ export async function runWorkflow(
       const definition = registry.get(node.type)!;
       const nodeStarted = Date.now();
       const wires = incoming.get(node.id) ?? [];
+
+      if (reachable !== null && !reachable.has(node.id)) {
+        // Loose node: no path from a trigger reaches it, so it does not
+        // run. Recorded as skipped, with the reason on the step, and
+        // everything downstream of it sees empty output (it is loose
+        // too, or fed only by loose nodes, so it lands here as well).
+        const step: RunStepResult = {
+          nodeId: node.id,
+          nodeName: node.name,
+          nodeType: node.type,
+          status: 'skipped',
+          input: [],
+          output: emptyOutput(definition),
+          note: 'Not wired to the trigger, so this node did not run.',
+          startedAt: nodeStarted,
+          finishedAt: Date.now(),
+        };
+        outputsById.set(node.id, step.output);
+        outputsByName.set(node.name, []);
+        log(`Skipped ${node.name}: not wired to the trigger.`);
+        recordStep(step);
+        continue;
+      }
 
       // The inputs declaration is a promise about wiring: a trigger with
       // wires, or a normal node with none, runs anyway but says so.
@@ -205,6 +257,7 @@ export async function runWorkflow(
           status: 'skipped',
           input: [],
           output: emptyOutput(definition),
+          note: 'Nothing arrived on its wires, so this node did not run.',
           startedAt: nodeStarted,
           finishedAt: Date.now(),
         };

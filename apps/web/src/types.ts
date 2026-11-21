@@ -13,6 +13,8 @@ export interface StepData {
   input: Item[];
   output: NodeOutput;
   error?: string;
+  /** Plain-words reason the step did not run (skipped steps). */
+  note?: string;
   startedAt: number;
   finishedAt: number;
 }

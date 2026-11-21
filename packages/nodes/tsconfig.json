@@ -1,1 +1,1 @@
-{"compilerOptions":{"composite":true,"declaration":true,"outDir":"dist","rootDir":"."},"extends":"../../tsconfig.base.json","include":["index.ts","code","http","if","manual-trigger","set"],"references":[{"path":"../engine"}]}
+{"compilerOptions": {"composite": true, "declaration": true, "outDir": "dist", "rootDir": "."}, "extends": "../../tsconfig.base.json", "include": ["index.ts", "code", "http", "if", "manual-trigger", "schedule-trigger", "set", "webhook-trigger"], "references": [{"path": "../engine"}]}

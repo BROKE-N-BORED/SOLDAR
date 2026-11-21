@@ -37,6 +37,7 @@ export interface StepRecord {
   inputJson: string;
   outputJson: string;
   error: string | null;
+  note: string | null;
   startedAt: number;
   finishedAt: number;
 }

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.4.0
+
+The automation update: workflows now run on their own.
+
+- New Schedule Trigger node. Give it a schedule pattern (like every
+  day at 9 AM) and the workflow runs at those times, as long as the
+  workflow is Active. The node's settings explain the pattern with
+  examples. A pattern that does not parse is refused when you save,
+  with the reason in plain words.
+- New Webhook Trigger node. A workflow gets its own web address
+  (Soldar's address plus /webhook/ and an ending). A request to that
+  address starts a run with the request data, and the caller gets the
+  run's result back. Leave the ending empty and Soldar makes up a
+  random one when you save, so addresses cannot be guessed.
+- The Active switch works now, in the editor and in the workflow
+  list. Active workflows run their schedules and answer their
+  webhooks; inactive ones only run when you press Run. Schedules pick
+  back up on their own after a restart. Run history says what started
+  each run: manual, schedule, or webhook.
+- Nodes that are not wired to a trigger no longer run. Before, a
+  loose node sitting on the canvas ran anyway, and if it failed it
+  failed the whole run. Now it is skipped, and its step in the run
+  panel says why: "Not wired to the trigger, so this node did not
+  run." A node on a branch that carried nothing says the same kind of
+  thing. A workflow with no trigger node at all cannot run, and
+  pressing Run says so in plain words instead of failing strangely.
+
 ## 0.3.1
 
 Fixes from a hands-on review of 0.3.0, driving the installed app the

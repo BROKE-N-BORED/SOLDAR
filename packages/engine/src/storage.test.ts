@@ -66,6 +66,7 @@ describe('storage', () => {
       inputJson: JSON.stringify([{ json: {} }]),
       outputJson: JSON.stringify({ main: [{ json: { a: 1 } }] }),
       error: null,
+      note: null,
       startedAt: 1000,
       finishedAt: 1001,
     });
@@ -78,6 +79,7 @@ describe('storage', () => {
       inputJson: '[]',
       outputJson: '{}',
       error: 'something broke',
+      note: null,
       startedAt: 1001,
       finishedAt: 1002,
     });
@@ -112,6 +114,7 @@ describe('storage', () => {
       inputJson: '[]',
       outputJson: '{}',
       error: null,
+      note: null,
       startedAt,
       finishedAt: startedAt + 1,
     });
@@ -152,7 +155,7 @@ describe('storage', () => {
     const applied = raw
       .prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all() as { version: number }[];
-    expect(applied.map((r) => r.version)).toEqual([1, 2]);
+    expect(applied.map((r) => r.version)).toEqual([1, 2, 3]);
     raw.close();
 
     storage.close();
@@ -272,6 +275,7 @@ describe('workflow storage', () => {
       inputJson: '[]',
       outputJson: '{}',
       error: null,
+      note: null,
       startedAt: 1000,
       finishedAt: 1001,
     });
@@ -298,6 +302,7 @@ describe('workflow storage', () => {
       inputJson: '[]',
       outputJson: '{}',
       error: null,
+      note: null,
       startedAt: 1000,
       finishedAt: 1001,
     });
@@ -364,6 +369,7 @@ describe('workflow storage', () => {
       inputJson: '[]',
       outputJson: '{}',
       error: null,
+      note: null,
       startedAt: 1000,
       finishedAt: 1001,
     });
